@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alperen/sensorpanel/pkg/device"
 	"github.com/google/gousb"
 )
 
@@ -48,21 +49,9 @@ func (d DiscoveredDevice) ToUSBDevice() USBDevice {
 	}
 }
 
-// KnownDisplayVendors contains VID:PID pairs known to be USB display panels.
-var KnownDisplayVendors = []USBDevice{
-	{VendorID: 0x1908, ProductID: 0x0102}, // QTKeJi/AIDA64 USB-Display
-	{VendorID: 0x1908, ProductID: 0x0103}, // Alternate QTKeJi variant
-	{VendorID: 0x1d6b, ProductID: 0x0104}, // Some AX206 variants
-}
-
-// isKnownDisplay checks if a device matches known display panels.
+// isKnownDisplay checks if a device matches known display panels from the device registry.
 func isKnownDisplay(vid, pid uint16) bool {
-	for _, known := range KnownDisplayVendors {
-		if known.VendorID == vid && known.ProductID == pid {
-			return true
-		}
-	}
-	return false
+	return device.IsKnownDevice(vid, pid)
 }
 
 // isProbableDisplay uses heuristics to guess if a device might be a display.

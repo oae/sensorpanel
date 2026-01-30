@@ -147,6 +147,12 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 		return fmt.Errorf("theme '%s' is not built (missing dist/index.html)\nRun 'cd %s && npm install && npm run build' to build it", themeName, t.Path)
 	}
 
+	// Check if theme is outdated
+	if theme.IsOutdated(t.Path) {
+		fmt.Printf("Warning: Theme '%s' may be outdated (src/ is newer than dist/)\n", themeName)
+		fmt.Printf("Run 'sensorpanel theme build %s' to rebuild\n\n", themeName)
+	}
+
 	fmt.Printf("Using theme: %s\n", themeName)
 
 	// Check if browser is available, auto-download if not
@@ -163,8 +169,17 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 
 	fmt.Printf("Theme server running at %s\n", srv.URL())
 
+	// Use device profile dimensions, or fall back to theme metadata
+	width := dev.Profile.Width()
+	height := dev.Profile.Height()
+	if t.Metadata.Width > 0 && t.Metadata.Height > 0 {
+		// Theme specifies its own dimensions - use those for browser rendering
+		width = t.Metadata.Width
+		height = t.Metadata.Height
+	}
+
 	// Start headless browser
-	browserRenderer, err := browser.NewRenderer(t.Metadata.Width, t.Metadata.Height)
+	browserRenderer, err := browser.NewRenderer(width, height)
 	if err != nil {
 		return fmt.Errorf("failed to initialize browser: %w", err)
 	}
@@ -216,8 +231,12 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 
 // runWithBuiltinRenderer runs the dashboard using the built-in bitmap renderer.
 func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.Collector, sigChan chan os.Signal) error {
-	// Configure renderer
-	render := renderer.New(nil) // Use defaults (480x320)
+	// Configure renderer with device profile dimensions
+	renderConfig := &renderer.Config{
+		Width:  dev.Profile.Width(),
+		Height: dev.Profile.Height(),
+	}
+	render := renderer.New(renderConfig)
 
 	fmt.Printf("Dashboard running (%.1fs interval). Press Ctrl+C to stop.\n", runInterval)
 

@@ -14,8 +14,6 @@ import (
 	"github.com/alperen/sensorpanel/pkg/browser"
 	"github.com/alperen/sensorpanel/pkg/config"
 	"github.com/alperen/sensorpanel/pkg/paths"
-	"github.com/alperen/sensorpanel/pkg/sensors"
-	"github.com/alperen/sensorpanel/pkg/server"
 	"github.com/alperen/sensorpanel/pkg/theme"
 	"github.com/spf13/cobra"
 )
@@ -216,98 +214,124 @@ var themePathCmd = &cobra.Command{
 	},
 }
 
-var themeDevPort int
+var (
+	themeDevNoBrowser bool
+	themeDevInterval  float64
+)
 
 var themeDevCmd = &cobra.Command{
 	Use:   "dev [name]",
-	Short: "Start sensor data server for theme development",
-	Long: `Start a WebSocket server that broadcasts live sensor data for theme development.
+	Short: "Start development server with live sensor data",
+	Long: `Start a complete theme development environment with one command.
 
-This allows you to develop themes with real sensor data:
-  1. Run 'sensorpanel theme dev' to start the sensor server
-  2. In another terminal, run 'npm run dev' in your theme directory
-  3. Open http://localhost:3000?ws=PORT (use the port shown by this command)
+This automatically:
+  1. Detects your package manager (npm/yarn/pnpm/bun)
+  2. Installs dependencies if needed
+  3. Starts a WebSocket server for live sensor data
+  4. Starts the Vite dev server with HMR
+  5. Opens your browser to the theme
 
-The sensor data will be broadcast via WebSocket and your theme will update in real-time.`,
+The sensor data will be broadcast via WebSocket and your theme will update in real-time.
+Press Ctrl+C to stop all servers.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var themeName string
 		if len(args) > 0 {
 			themeName = args[0]
+		} else {
+			// Use current theme from config
+			themeName, _ = config.GetTheme()
 		}
 
-		// If theme specified, verify it exists
-		if themeName != "" {
-			if _, err := theme.Load(themeName); err != nil {
-				return fmt.Errorf("failed to load theme '%s': %w", themeName, err)
+		if themeName == "" {
+			return fmt.Errorf("no theme specified and no theme selected in config\nUse: sensorpanel theme dev <name>")
+		}
+
+		// Load theme to get path
+		t, err := theme.Load(themeName)
+		if err != nil {
+			if err == theme.ErrThemeNotFound {
+				return fmt.Errorf("theme '%s' not found (use 'theme list' to see available themes)", themeName)
 			}
+			return fmt.Errorf("failed to load theme '%s': %w", themeName, err)
 		}
 
-		// Create sensor collector
-		sensorConfig := &sensors.Config{
-			ShowCPU:          true,
-			ShowGPU:          true,
-			ShowRAM:          true,
-			ShowDisk:         true,
-			ShowNetwork:      true,
-			DiskMounts:       []string{"/"},
-			NetworkInterface: "*",
-			GPUMethod:        "auto",
-		}
-		collector := sensors.NewCollector(sensorConfig)
+		fmt.Printf("Starting development server for theme: %s\n", themeName)
+		fmt.Printf("Theme path: %s\n\n", t.Path)
 
-		// Start sensor server (no theme files, just WebSocket)
-		// We'll use a simple HTTP server with just the /ws endpoint
-		srv := server.New("") // Empty dir - will only serve WebSocket
-		if err := srv.Start(); err != nil {
-			return fmt.Errorf("failed to start server: %w", err)
+		// Create dev server
+		devServer := theme.NewDevServer(t.Path)
+		devServer.NoBrowser = themeDevNoBrowser
+		if themeDevInterval > 0 {
+			devServer.Interval = themeDevInterval
 		}
-		defer srv.Stop()
-
-		port := srv.Port()
-		fmt.Println("=== Theme Development Server ===")
-		fmt.Printf("WebSocket server running on port %d\n", port)
-		fmt.Println()
-		fmt.Println("To connect your theme:")
-		fmt.Printf("  1. Run 'npm run dev' in your theme directory\n")
-		fmt.Printf("  2. Open: http://localhost:3000?ws=%d\n", port)
-		fmt.Println()
-		fmt.Println("Press Ctrl+C to stop.")
-		fmt.Println()
 
 		// Setup signal handling
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-		// Prime the CPU load calculation
-		collector.Collect()
-		time.Sleep(100 * time.Millisecond)
+		go func() {
+			<-sigChan
+			fmt.Println("\nShutting down...")
+			cancel()
+		}()
 
-		// Main loop - collect and broadcast sensor data
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		frameCount := 0
-		for {
-			select {
-			case <-sigChan:
-				fmt.Println("\nShutting down...")
-				return nil
-
-			case <-ticker.C:
-				data := collector.Collect()
-				jsonData := sensorDataToJSON(data)
-				if err := srv.BroadcastSensorData(jsonData); err == nil {
-					frameCount++
-					if frameCount%10 == 0 {
-						clients := srv.ClientCount()
-						if clients > 0 {
-							fmt.Printf("Broadcasting to %d client(s)...\n", clients)
-						}
-					}
-				}
-			}
+		// Start the dev server
+		if err := devServer.Start(ctx); err != nil {
+			return err
 		}
+		defer devServer.Stop()
+
+		// Wait for shutdown
+		devServer.Wait()
+		return nil
+	},
+}
+
+var themeBuildCmd = &cobra.Command{
+	Use:   "build [name]",
+	Short: "Build a theme for production",
+	Long: `Build a theme for production use.
+
+This runs the theme's build script (usually via Vite) to produce
+optimized static files in the dist/ directory.
+
+If no name is provided, builds the currently selected theme.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var themeName string
+		if len(args) > 0 {
+			themeName = args[0]
+		} else {
+			themeName, _ = config.GetTheme()
+		}
+
+		if themeName == "" {
+			return fmt.Errorf("no theme specified and no theme selected in config\nUse: sensorpanel theme build <name>")
+		}
+
+		// Load theme to get path
+		t, err := theme.Load(themeName)
+		if err != nil {
+			if err == theme.ErrThemeNotFound {
+				return fmt.Errorf("theme '%s' not found (use 'theme list' to see available themes)", themeName)
+			}
+			return fmt.Errorf("failed to load theme '%s': %w", themeName, err)
+		}
+
+		fmt.Printf("Building theme: %s\n", themeName)
+		fmt.Printf("Theme path: %s\n\n", t.Path)
+
+		if err := theme.Build(t.Path); err != nil {
+			return err
+		}
+
+		fmt.Printf("\nTheme '%s' built successfully!\n", themeName)
+		fmt.Printf("Output: %s/dist/\n", t.Path)
+		return nil
 	},
 }
 
@@ -413,7 +437,12 @@ func init() {
 	themeCmd.AddCommand(themeDeleteCmd)
 	themeCmd.AddCommand(themePathCmd)
 	themeCmd.AddCommand(themeDevCmd)
+	themeCmd.AddCommand(themeBuildCmd)
 	themeCmd.AddCommand(themeBrowserCmd)
+
+	// Flags for theme dev
+	themeDevCmd.Flags().BoolVar(&themeDevNoBrowser, "no-browser", false, "Don't open browser automatically")
+	themeDevCmd.Flags().Float64VarP(&themeDevInterval, "interval", "i", 1.0, "Sensor update interval in seconds")
 
 	themeBrowserCmd.AddCommand(themeBrowserInstallCmd)
 	themeBrowserCmd.AddCommand(themeBrowserStatusCmd)

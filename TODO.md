@@ -1536,58 +1536,58 @@ jobs:
 ## Implementation Checklist
 
 ### Phase 1: Device Profile System
-- [ ] Create `pkg/device/profile.go` - interface and types
-- [ ] Create `pkg/device/registry.go` - registration and lookup
-- [ ] Create `pkg/device/qtkeji.go` - extract current device logic
-- [ ] Create `pkg/device/generic.go` - fallback profile
-- [ ] Refactor `pkg/panel/device.go` - use profiles
-- [ ] Refactor `pkg/panel/protocol.go` - shared utilities only
-- [ ] Update `pkg/config/discovery.go` - use registry
-- [ ] Update `pkg/config/config.go` - add ProfileID field
-- [ ] Update `pkg/renderer/renderer.go` - dynamic dimensions
-- [ ] Update `cmd/run.go` - get dimensions from profile
-- [ ] Update `cmd/device.go` - show profile info
+- [x] Create `pkg/device/profile.go` - interface and types
+- [x] Create `pkg/device/registry.go` - registration and lookup
+- [x] Create `pkg/device/qtkeji.go` - extract current device logic
+- [x] Create `pkg/device/generic.go` - fallback profile
+- [x] Refactor `pkg/panel/device.go` - use profiles
+- [x] Refactor `pkg/panel/protocol.go` - shared utilities only
+- [x] Update `pkg/config/discovery.go` - use registry
+- [x] Update `pkg/config/config.go` - add ProfileID field
+- [x] Update `pkg/renderer/renderer.go` - dynamic dimensions
+- [x] Update `cmd/run.go` - get dimensions from profile
+- [x] Update `cmd/device.go` - show profile info
 
 ### Phase 2: Device Creation CLI
-- [ ] Create `pkg/device/generator.go` - profile code generator
-- [ ] Add `device create` command to `cmd/device.go`
-- [ ] Add interactive prompts
-- [ ] Generate skeleton Go file
-- [ ] Print next steps for contributor
+- [x] Create `pkg/device/generator.go` - profile code generator
+- [x] Add `device create` command to `cmd/device.go`
+- [x] Add interactive prompts
+- [x] Generate skeleton Go file
+- [x] Print next steps for contributor
 
 ### Phase 3: Theme Development
-- [ ] Create `pkg/theme/packagemanager.go`
-- [ ] Create `pkg/theme/browser.go`
-- [ ] Create `pkg/theme/devserver.go`
-- [ ] Create `pkg/theme/builder.go`
-- [ ] Update `cmd/theme.go` - dev, build commands
-- [ ] Update `cmd/run.go` - outdated warning
+- [x] Create `pkg/theme/packagemanager.go`
+- [x] Create `pkg/theme/browser.go`
+- [x] Create `pkg/theme/devserver.go`
+- [x] Create `pkg/theme/builder.go`
+- [x] Update `cmd/theme.go` - dev, build commands
+- [x] Update `cmd/run.go` - outdated warning
 
 ### Phase 4: React+TypeScript Template
-- [ ] Create template directory structure
-- [ ] Create `lib/sensorpanel/types.ts`
-- [ ] Create `lib/sensorpanel/client.ts`
-- [ ] Create `lib/sensorpanel/hooks.ts`
-- [ ] Create `lib/sensorpanel/index.ts`
-- [ ] Create `src/App.tsx` starter
-- [ ] Create `src/App.css` starter
-- [ ] Create all config files (package.json, tsconfig, vite, eslint)
-- [ ] Update `pkg/theme/template.go` to embed new template
+- [x] Create template directory structure
+- [x] Create `lib/sensorpanel/types.ts`
+- [x] Create `lib/sensorpanel/client.ts`
+- [x] Create `lib/sensorpanel/hooks.ts`
+- [x] Create `lib/sensorpanel/index.ts`
+- [x] Create `src/App.tsx` starter
+- [x] Create `src/App.css` starter
+- [x] Create all config files (package.json, tsconfig, vite, eslint)
+- [x] Update `pkg/theme/template.go` to embed new template
 
 ### Phase 5: Mage Build System
-- [ ] Create `magefiles/magefile.go`
-- [ ] Add mage to `go.mod`
-- [ ] Test all targets (build, test, lint, release)
+- [x] Create `magefiles/magefile.go`
+- [x] Add mage to `go.mod`
+- [x] Test all targets (build, test, lint, release)
 
 ### Phase 6: Open Source Prep
-- [ ] Create `CONTRIBUTING.md`
-- [ ] Create `docs/adding-devices.md`
-- [ ] Create `docs/creating-themes.md`
-- [ ] Create `.github/ISSUE_TEMPLATE/bug_report.md`
-- [ ] Create `.github/ISSUE_TEMPLATE/feature_request.md`
-- [ ] Create `.github/ISSUE_TEMPLATE/new_device.md`
-- [ ] Create `.github/workflows/ci.yml`
-- [ ] Update `README.md` - add contributor section, badges
+- [x] Create `CONTRIBUTING.md`
+- [x] Create `docs/adding-devices.md`
+- [x] Create `docs/creating-themes.md`
+- [x] Create `.github/ISSUE_TEMPLATE/bug_report.md`
+- [x] Create `.github/ISSUE_TEMPLATE/feature_request.md`
+- [x] Create `.github/ISSUE_TEMPLATE/new_device.md`
+- [x] Create `.github/workflows/ci.yml`
+- [x] Update `README.md` - add contributor section, badges
 
 ---
 

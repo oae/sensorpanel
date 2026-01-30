@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+
+	"github.com/alperen/sensorpanel/pkg/device"
 )
 
 // Display dimensions (detected devices may vary - these are common defaults)
@@ -57,6 +59,16 @@ func NewDeviceInfo() *DeviceInfo {
 		Width:         DefaultDisplayWidth,
 		Height:        DefaultDisplayHeight,
 		BufferSize:    DefaultBufferSize,
+		MaxPacketSize: 64,
+	}
+}
+
+// NewDeviceInfoFromProfile creates a DeviceInfo from a device profile.
+func NewDeviceInfoFromProfile(profile device.DeviceProfile) *DeviceInfo {
+	return &DeviceInfo{
+		Width:         profile.Width(),
+		Height:        profile.Height(),
+		BufferSize:    profile.BufferSize(),
 		MaxPacketSize: 64,
 	}
 }
@@ -363,9 +375,129 @@ func ImageToRGB565Buffer(img image.Image) []byte {
 	return buffer
 }
 
+// ImageToRGB565BufferBE converts a Go image to RGB565 buffer with big-endian byte order.
+func ImageToRGB565BufferBE(img image.Image) []byte {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	buffer := make([]byte, width*height*BytesPerPixel)
+
+	idx := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			c := img.At(x, y)
+			r, g, b, _ := c.RGBA()
+			rgb565 := RGBToRGB565(uint8(r>>8), uint8(g>>8), uint8(b>>8))
+			binary.BigEndian.PutUint16(buffer[idx:idx+2], rgb565)
+			idx += 2
+		}
+	}
+
+	return buffer
+}
+
+// ImageToRGB565BufferLE converts a Go image to RGB565 buffer with little-endian byte order.
+func ImageToRGB565BufferLE(img image.Image) []byte {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	buffer := make([]byte, width*height*BytesPerPixel)
+
+	idx := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			c := img.At(x, y)
+			r, g, b, _ := c.RGBA()
+			rgb565 := RGBToRGB565(uint8(r>>8), uint8(g>>8), uint8(b>>8))
+			binary.LittleEndian.PutUint16(buffer[idx:idx+2], rgb565)
+			idx += 2
+		}
+	}
+
+	return buffer
+}
+
+// ImageToRGB888Buffer converts a Go image to RGB888 buffer.
+func ImageToRGB888Buffer(img image.Image) []byte {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	buffer := make([]byte, width*height*3)
+
+	idx := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			c := img.At(x, y)
+			r, g, b, _ := c.RGBA()
+			buffer[idx] = uint8(r >> 8)
+			buffer[idx+1] = uint8(g >> 8)
+			buffer[idx+2] = uint8(b >> 8)
+			idx += 3
+		}
+	}
+
+	return buffer
+}
+
 // CreateColorBarsBuffer creates a standard 8-color bar test pattern.
 func CreateColorBarsBuffer() []byte {
-	buffer := make([]byte, DefaultBufferSize)
+	return CreateColorBarsBufferWithSize(DefaultDisplayWidth, DefaultDisplayHeight)
+}
+
+// CreateSolidColorBufferWithSize creates an RGB565 buffer filled with a single color.
+func CreateSolidColorBufferWithSize(r, g, b uint8, width, height int) []byte {
+	rgb565 := RGBToRGB565(r, g, b)
+	bufferSize := width * height * BytesPerPixel
+	buffer := make([]byte, bufferSize)
+
+	for i := 0; i < bufferSize; i += 2 {
+		binary.BigEndian.PutUint16(buffer[i:i+2], rgb565)
+	}
+	return buffer
+}
+
+// CreateTestPatternBufferWithSize creates a 4-color quadrant test pattern.
+func CreateTestPatternBufferWithSize(width, height int) []byte {
+	bufferSize := width * height * BytesPerPixel
+	buffer := make([]byte, bufferSize)
+
+	red := RGBToRGB565(255, 0, 0)
+	green := RGBToRGB565(0, 255, 0)
+	blue := RGBToRGB565(0, 0, 255)
+	white := RGBToRGB565(255, 255, 255)
+
+	halfW := width / 2
+	halfH := height / 2
+
+	idx := 0
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			var rgb565 uint16
+			if y < halfH {
+				if x < halfW {
+					rgb565 = red
+				} else {
+					rgb565 = green
+				}
+			} else {
+				if x < halfW {
+					rgb565 = blue
+				} else {
+					rgb565 = white
+				}
+			}
+			binary.BigEndian.PutUint16(buffer[idx:idx+2], rgb565)
+			idx += 2
+		}
+	}
+
+	return buffer
+}
+
+// CreateColorBarsBufferWithSize creates a standard 8-color bar test pattern.
+func CreateColorBarsBufferWithSize(width, height int) []byte {
+	bufferSize := width * height * BytesPerPixel
+	buffer := make([]byte, bufferSize)
 
 	colors := []color.RGBA{
 		{255, 255, 255, 255}, // White
@@ -378,10 +510,10 @@ func CreateColorBarsBuffer() []byte {
 		{0, 0, 0, 255},       // Black
 	}
 
-	barHeight := DefaultDisplayHeight / len(colors)
+	barHeight := height / len(colors)
 
 	idx := 0
-	for y := 0; y < DefaultDisplayHeight; y++ {
+	for y := 0; y < height; y++ {
 		colorIdx := y / barHeight
 		if colorIdx >= len(colors) {
 			colorIdx = len(colors) - 1
@@ -389,7 +521,7 @@ func CreateColorBarsBuffer() []byte {
 		c := colors[colorIdx]
 		rgb565 := RGBToRGB565(c.R, c.G, c.B)
 
-		for x := 0; x < DefaultDisplayWidth; x++ {
+		for x := 0; x < width; x++ {
 			binary.BigEndian.PutUint16(buffer[idx:idx+2], rgb565)
 			idx += 2
 		}
