@@ -52,6 +52,9 @@ result-*
 test_preview.png
 session-*.md
 
+# Go
+/sensorpanel
+
 # OS
 .DS_Store
 Thumbs.db
