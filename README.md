@@ -1,42 +1,195 @@
-# AX206 Sensor Panel for NixOS
+# SensorPanel
 
-A complete NixOS solution for driving AX206-based USB LCD displays as real-time system monitoring dashboards.
+A cross-platform CLI tool for driving AX206-based USB LCD displays as real-time system monitoring dashboards.
 
 ![Dashboard Example](docs/dashboard-preview.png)
 
 ## Features
 
-- **Pure Python implementation** - No C compilation required, uses pyusb
-- **Real-time monitoring** - CPU, GPU (NVIDIA), RAM, disk, and network stats
-- **NixOS native** - Flake-based with proper module, udev rules, and systemd service
-- **Themeable** - Dark and light themes included
-- **Headless rendering** - Works without X11/Wayland (uses Pillow)
-- **Auto-reconnect** - Handles device disconnection gracefully
+- **Go implementation** - Single binary, no dependencies at runtime
+- **Real-time monitoring** - CPU, GPU (NVIDIA/AMD), RAM, disk, and network stats
+- **Web-based themes** - Create custom themes using React/HTML/CSS
+- **Headless rendering** - Auto-downloads Chrome for Testing to render themes
+- **NixOS support** - Flake with module, udev rules, and systemd service
+- **XDG compliance** - Config in `~/.config/`, themes in `~/.local/share/`
 
 ## Quick Start
 
-### 1. Add to your flake.nix
+### 1. Build
+
+```bash
+# With Nix
+nix build
+
+# Or with Go
+go build .
+```
+
+### 2. Select your display
+
+```bash
+./sensorpanel device select
+```
+
+### 3. Run the dashboard
+
+```bash
+# With built-in renderer
+./sensorpanel run
+
+# Or create and use a custom theme
+./sensorpanel theme create my-theme
+./sensorpanel theme select my-theme
+./sensorpanel run
+```
+
+## Commands
+
+### Run Dashboard
+
+```bash
+sensorpanel run [flags]
+
+Flags:
+  -i, --interval float   Update interval in seconds (default 1.0)
+  -b, --brightness int   Backlight brightness 0-7 (default 7)
+  -m, --mounts strings   Disk mount points to monitor (default [/])
+      --cpu              Show CPU stats (default true)
+      --gpu              Show GPU stats (default true)
+      --ram              Show RAM stats (default true)
+      --disk             Show disk stats (default true)
+      --network          Show network stats (default true)
+```
+
+### Device Management
+
+```bash
+sensorpanel device list      # List available USB displays
+sensorpanel device select    # Interactive device selection
+sensorpanel device info      # Show current device config
+sensorpanel device reset     # Reset to defaults
+```
+
+### Theme Management
+
+```bash
+sensorpanel theme list              # List installed themes
+sensorpanel theme create <name>     # Create from React template
+sensorpanel theme select <name>     # Set active theme
+sensorpanel theme preview [name]    # Open in browser
+sensorpanel theme delete <name>     # Remove theme
+sensorpanel theme path              # Show themes directory
+sensorpanel theme dev               # Start dev server with live sensor data
+sensorpanel theme browser install   # Download Chrome for Testing
+sensorpanel theme browser status    # Check browser availability
+sensorpanel theme browser remove    # Remove cached browser
+```
+
+### Panel Control
+
+```bash
+sensorpanel panel status       # Check if panel is connected
+sensorpanel panel test         # Display test pattern
+sensorpanel panel on           # Turn backlight on
+sensorpanel panel off          # Turn backlight off
+sensorpanel panel brightness 5 # Set brightness (0-7)
+```
+
+### Benchmark
+
+```bash
+sensorpanel benchmark          # Measure FPS performance
+```
+
+## Theme Development
+
+Themes are React applications that receive sensor data via WebSocket.
+
+### Create a theme
+
+```bash
+sensorpanel theme create my-theme
+cd ~/.local/share/sensorpanel/themes/my-theme
+```
+
+### Development workflow
+
+```bash
+# Terminal 1: Start sensor data server
+sensorpanel theme dev
+# Shows: WebSocket server running on port XXXXX
+
+# Terminal 2: Start React dev server
+cd ~/.local/share/sensorpanel/themes/my-theme
+npm run dev
+# Open: http://localhost:3000?ws=XXXXX
+```
+
+### Build and use
+
+```bash
+cd ~/.local/share/sensorpanel/themes/my-theme
+npm run build
+sensorpanel theme select my-theme
+sensorpanel run
+```
+
+### Sensor data format
+
+The WebSocket sends JSON with this structure:
+
+```json
+{
+  "cpu": {
+    "temperature": 65.0,
+    "load": 45.2,
+    "frequency": 3800
+  },
+  "gpu": {
+    "temperature": 70.0,
+    "load": 80.0,
+    "memory_used": 4096,
+    "memory_total": 8192,
+    "power": 150.0
+  },
+  "ram": {
+    "used": 16384,
+    "total": 32768,
+    "percent": 50.0
+  },
+  "disk": {
+    "/": {"used": 100, "total": 500, "percent": 20.0},
+    "/home": {"used": 200, "total": 1000, "percent": 20.0}
+  },
+  "network": {
+    "eth0": {"rx_rate": 1024000, "tx_rate": 512000}
+  }
+}
+```
+
+## NixOS Installation
+
+### Add to your flake.nix
 
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    ax206-display.url = "path:/home/alperen/code/personal/sensorpanel";
-    # Or from GitHub: ax206-display.url = "github:yourusername/sensorpanel";
+    sensorpanel.url = "github:yourusername/sensorpanel";
   };
 
-  outputs = { self, nixpkgs, ax206-display, ... }: {
+  outputs = { self, nixpkgs, sensorpanel, ... }: {
     nixosConfigurations.yourhostname = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
         ./configuration.nix
-        ax206-display.nixosModules.default
+        sensorpanel.nixosModules.default
         {
-          services.ax206Display = {
+          services.sensorpanel = {
             enable = true;
-            interval = "2";
-            theme = "dark";
-            gpu.method = "nvidia";
+            interval = 1.0;
+            brightness = 7;
+            theme = "my-theme";  # or null for built-in renderer
           };
         }
       ];
@@ -45,271 +198,40 @@ A complete NixOS solution for driving AX206-based USB LCD displays as real-time 
 }
 ```
 
-### 2. Rebuild and test
-
-```bash
-sudo nixos-rebuild switch
-
-# Check service status
-systemctl status ax206-display
-
-# View logs
-journalctl -u ax206-display -f
-```
-
-## Configuration Options
-
-### Full Configuration Example
+### Module options
 
 ```nix
-services.ax206Display = {
+services.sensorpanel = {
   enable = true;
-  
-  # Update interval in seconds
-  interval = "2";
-  
-  # Theme: "dark" or "light"
-  theme = "dark";
-  
-  # Display rotation: 0, 90, 180, 270
-  rotation = 0;
-  
-  # GPU settings
-  gpu = {
-    enable = true;
-    method = "nvidia";  # "nvidia", "amd", "auto", "none"
-  };
-  
-  # Metrics to display
-  metrics = {
-    cpu = true;
-    ram = true;
-    disk = true;
-    network = true;
-  };
-  
-  # Disk mount points to monitor
-  diskMounts = [ "/" "/home" ];
-  
-  # Network interface (supports glob patterns)
-  networkInterface = "enp*";  # or "eth0", "*" for auto
-  
-  # Service user/group (usually leave as default)
-  user = "axdisplay";
-  group = "axdisplay";
+  interval = 1.0;        # Update interval in seconds
+  brightness = 7;        # Backlight brightness (0-7)
+  theme = null;          # Theme name or null for built-in
+  diskMounts = [ "/" ];  # Mount points to monitor
+  user = "sensorpanel";  # Service user
+  group = "sensorpanel"; # Service group (for USB access)
 };
 ```
 
-## Manual Testing
-
-### Development Shell
+### Manual setup
 
 ```bash
-# Enter development environment
-nix develop
+# Rebuild system
+sudo nixos-rebuild switch
 
-# List connected devices
-python -m axdisplay --list
-
-# Display test pattern
-python -m axdisplay --test
-
-# Run single update (for debugging)
-python -m axdisplay --once
-
-# Render preview without device
-python -m axdisplay --preview output.png
-
-# Run daemon manually
-python -m axdisplay -v
-```
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AXDISPLAY_INTERVAL` | Update interval (seconds) | `2` |
-| `AXDISPLAY_THEME` | Theme name | `dark` |
-| `AXDISPLAY_ROTATION` | Rotation degrees | `0` |
-| `AXDISPLAY_GPU_METHOD` | GPU monitoring method | `nvidia` |
-| `AXDISPLAY_SHOW_CPU` | Show CPU metrics | `1` |
-| `AXDISPLAY_SHOW_GPU` | Show GPU metrics | `1` |
-| `AXDISPLAY_SHOW_RAM` | Show RAM metrics | `1` |
-| `AXDISPLAY_SHOW_DISK` | Show disk metrics | `1` |
-| `AXDISPLAY_SHOW_NETWORK` | Show network metrics | `1` |
-| `AXDISPLAY_DISK_MOUNTS` | Comma-separated mounts | `/` |
-| `AXDISPLAY_NETWORK_IF` | Interface pattern | `*` |
-
-## Verification Checklist
-
-### Step 1: Verify USB Device Detection
-
-```bash
-# Check if device is detected
-lsusb | grep 1908:0102
-
-# Expected output:
-# Bus 003 Device 010: ID 1908:0102 GEMBIRD Digital Photo Frame
-```
-
-### Step 2: Verify udev Rules
-
-After `nixos-rebuild switch`:
-
-```bash
-# Check udev rules are loaded
-cat /etc/udev/rules.d/99-local.rules | grep 1908
-
-# Trigger udev reload (if needed)
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-
-# Check device permissions
-ls -la /dev/bus/usb/003/010  # Adjust bus/device numbers
-
-# Expected: group should be 'axdisplay'
-# crw-rw---- 1 root axdisplay ... /dev/bus/usb/003/010
-```
-
-### Step 3: Test USB Communication
-
-```bash
-# Enter dev shell
-nix develop
-
-# List devices (tests basic USB access)
-python -m axdisplay --list
-
-# Expected: Device details shown
-```
-
-### Step 4: Display Test Pattern
-
-```bash
-# Display test pattern
-python -m axdisplay --test
-
-# You should see colored bars on the display
-```
-
-### Step 5: Test Full Dashboard
-
-```bash
-# Single update
-python -m axdisplay --once
-
-# Continuous updates
-python -m axdisplay -v
-
-# Press Ctrl+C to stop
-```
-
-### Step 6: Enable Systemd Service
-
-```bash
-# Start service
-sudo systemctl start ax206-display
-
-# Check status
-systemctl status ax206-display
+# Check service status
+systemctl status sensorpanel
 
 # View logs
-journalctl -u ax206-display -f
-
-# Enable on boot
-sudo systemctl enable ax206-display
+journalctl -u sensorpanel -f
 ```
 
-## Troubleshooting
+## File Locations
 
-### Device Not Found
-
-1. **Check USB connection:**
-   ```bash
-   lsusb | grep 1908
-   ```
-
-2. **Check dmesg for errors:**
-   ```bash
-   dmesg | tail -50
-   ```
-
-3. **Verify udev rules are applied:**
-   ```bash
-   sudo udevadm test /sys/bus/usb/devices/3-1  # Adjust path
-   ```
-
-4. **Ensure user is in axdisplay group:**
-   ```bash
-   groups
-   # Should include 'axdisplay'
-   ```
-
-### Permission Denied
-
-1. **Add yourself to the group:**
-   ```nix
-   users.users.yourusername.extraGroups = [ "axdisplay" ];
-   ```
-   Then logout/login or run `newgrp axdisplay`.
-
-2. **Check device permissions:**
-   ```bash
-   ls -la /dev/bus/usb/003/010
-   ```
-
-### No GPU Stats
-
-1. **Check nvidia-smi works:**
-   ```bash
-   nvidia-smi
-   ```
-
-2. **Ensure NVIDIA drivers are installed:**
-   ```nix
-   services.xserver.videoDrivers = [ "nvidia" ];
-   ```
-
-3. **Try disabling GPU monitoring:**
-   ```nix
-   services.ax206Display.gpu.enable = false;
-   ```
-
-### Display Shows Wrong Resolution
-
-The device should auto-detect resolution, but you can override:
-
-```bash
-AXDISPLAY_WIDTH=320 AXDISPLAY_HEIGHT=240 python -m axdisplay
-```
-
-### Display Shows Garbage / Wrong Colors
-
-Your device might use a different byte order. Try opening an issue with:
-```bash
-lsusb -d 1908:0102 -v
-```
-
-## File Structure
-
-```
-sensorpanel/
-├── flake.nix              # Nix flake definition
-├── pyproject.toml         # Python package config
-├── README.md              # This file
-└── axdisplay/             # Python package
-    ├── __init__.py        # Package init
-    ├── __main__.py        # CLI entry point
-    ├── config.py          # Configuration
-    ├── device.py          # USB device interface
-    ├── protocol.py        # AX206 protocol implementation
-    ├── sensors.py         # System metrics collection
-    ├── renderer.py        # Dashboard rendering
-    └── themes/            # Theme definitions
-        ├── __init__.py
-        ├── dark.py
-        └── light.py
-```
+| Type | Path |
+|------|------|
+| Config | `~/.config/sensorpanel/config.json` |
+| Themes | `~/.local/share/sensorpanel/themes/` |
+| Browser cache | `~/.cache/sensorpanel/browser/` |
 
 ## Technical Details
 
@@ -318,12 +240,13 @@ sensorpanel/
 - **Vendor ID:** 0x1908
 - **Product ID:** 0x0102
 - **Interface:** USB Bulk transfers with SCSI CBW wrapper
-- **Color Format:** RGB565 (16-bit, little-endian)
-- **Typical Resolution:** 320x240 (landscape)
+- **Color Format:** RGB565 (16-bit, big-endian)
+- **Resolution:** 480x320 (landscape)
 
 ### Supported Devices
 
-Any AX206-based USB digital photo frame should work, including:
+Any AX206-based USB digital photo frame, including:
+- AIDA64-compatible USB displays
 - GEMBIRD Digital Photo Frame
 - Pearl brand frames
 - Various Coby models
@@ -336,16 +259,61 @@ Any AX206-based USB digital photo frame should work, including:
 | CPU Load | `/proc/stat` |
 | CPU Temp | `/sys/class/hwmon/*/temp*_input` |
 | CPU Freq | `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq` |
-| GPU | `nvidia-smi` or `/sys/class/drm/card*/device/` |
+| GPU (NVIDIA) | `nvidia-smi` |
+| GPU (AMD) | `/sys/class/drm/card*/device/` |
 | RAM | `/proc/meminfo` |
-| Disk | `os.statvfs()` |
+| Disk | `syscall.Statfs` |
 | Network | `/proc/net/dev` |
+
+## Troubleshooting
+
+### Device not found
+
+```bash
+# Check USB connection
+lsusb | grep 1908
+
+# Expected output:
+# Bus 003 Device 010: ID 1908:0102 GEMBIRD Digital Photo Frame
+```
+
+### Permission denied
+
+On NixOS with the module, the udev rules are set up automatically. Otherwise:
+
+```bash
+# Create udev rule
+sudo tee /etc/udev/rules.d/99-sensorpanel.rules << EOF
+SUBSYSTEM=="usb", ATTR{idVendor}=="1908", ATTR{idProduct}=="0102", MODE="0666"
+EOF
+
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+### Theme not rendering
+
+```bash
+# Check if browser is installed
+sensorpanel theme browser status
+
+# Install browser
+sensorpanel theme browser install
+
+# Check theme is built
+ls ~/.local/share/sensorpanel/themes/my-theme/dist/
+```
+
+### No GPU stats
+
+```bash
+# NVIDIA: Check nvidia-smi works
+nvidia-smi
+
+# AMD: Check sysfs
+ls /sys/class/drm/card*/device/gpu_busy_percent
+```
 
 ## License
 
 MIT License - See LICENSE file for details.
-
-## Credits
-
-- Protocol implementation based on [dpf-ax](https://github.com/dreamlayers/dpf-ax)
-- Inspired by AIDA64 sensor panel
