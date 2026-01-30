@@ -151,8 +151,9 @@ func (s *Server) BroadcastSensorData(data interface{}) error {
 		return err
 	}
 
-	s.clientsMu.RLock()
-	defer s.clientsMu.RUnlock()
+	// Use full lock since websocket.Conn.WriteMessage is not concurrent-safe
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
 
 	for client := range s.clients {
 		err := client.WriteMessage(websocket.TextMessage, jsonData)

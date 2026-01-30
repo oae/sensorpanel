@@ -1,6 +1,7 @@
 # SensorPanel
 
 [![CI](https://github.com/alperen/sensorpanel/actions/workflows/ci.yml/badge.svg)](https://github.com/alperen/sensorpanel/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/alperen/sensorpanel/graph/badge.svg)](https://codecov.io/gh/alperen/sensorpanel)
 [![Go Report Card](https://goreportcard.com/badge/github.com/alperen/sensorpanel)](https://goreportcard.com/report/github.com/alperen/sensorpanel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -344,6 +345,42 @@ nvidia-smi
 # AMD: Check sysfs
 ls /sys/class/drm/card*/device/gpu_busy_percent
 ```
+
+## Testing
+
+SensorPanel has comprehensive unit tests with good coverage across all core packages.
+
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run with verbose output
+go test -v ./...
+
+# Run with race detector
+go test -race ./...
+
+# Run with coverage
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out    # Summary by function
+go tool cover -html=coverage.out    # Interactive HTML report
+```
+
+### Coverage by Package
+
+| Package | Coverage | Description |
+|---------|----------|-------------|
+| `pkg/device` | ~99% | Device profiles and registry |
+| `pkg/server` | ~95% | WebSocket server for themes |
+| `pkg/paths` | ~77% | XDG directory handling |
+| `pkg/sensors` | ~57% | System sensor collection |
+| `pkg/panel` | ~50% | USB panel protocol (hardware-dependent) |
+| `pkg/config` | ~40% | Configuration and device discovery |
+| `pkg/theme` | ~34% | Theme management and building |
+
+Some packages have lower coverage because they interact with hardware (USB devices), external processes (Chromium), or the filesystem in ways that are difficult to test in isolation.
 
 ## Contributing
 

@@ -108,7 +108,7 @@ func GenerateProfile(spec DeviceSpec) (string, error) {
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, spec); err != nil {
+	if err := tmpl.Execute(&buf, &spec); err != nil {
 		return "", fmt.Errorf("failed to execute template: %w", err)
 	}
 
