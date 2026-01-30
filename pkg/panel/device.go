@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alperen/sensorpanel/pkg/device"
 	"github.com/google/gousb"
 )
 
@@ -40,26 +41,43 @@ type Device struct {
 	targetPID    uint16
 	targetSerial string // Optional: match specific serial number
 
+	// Device profile (set automatically based on VID/PID)
+	Profile device.DeviceProfile
+
 	// Device info populated on Open()
 	Info *DeviceInfo
 }
 
 // NewDeviceWithID creates a Device targeting a specific VID/PID.
 func NewDeviceWithID(vid, pid uint16) *Device {
+	profile := device.MustFindByVIDPID(vid, pid)
 	return &Device{
 		targetVID: vid,
 		targetPID: pid,
-		Info:      NewDeviceInfo(),
+		Profile:   profile,
+		Info:      NewDeviceInfoFromProfile(profile),
 	}
 }
 
 // NewDeviceWithSerial creates a Device targeting a specific VID/PID and serial.
 func NewDeviceWithSerial(vid, pid uint16, serial string) *Device {
+	profile := device.MustFindByVIDPID(vid, pid)
 	return &Device{
 		targetVID:    vid,
 		targetPID:    pid,
 		targetSerial: serial,
-		Info:         NewDeviceInfo(),
+		Profile:      profile,
+		Info:         NewDeviceInfoFromProfile(profile),
+	}
+}
+
+// NewDeviceWithProfile creates a Device with a specific profile.
+func NewDeviceWithProfile(vid, pid uint16, profile device.DeviceProfile) *Device {
+	return &Device{
+		targetVID: vid,
+		targetPID: pid,
+		Profile:   profile,
+		Info:      NewDeviceInfoFromProfile(profile),
 	}
 }
 
@@ -592,10 +610,7 @@ func (d *Device) setBacklightInternal(level int) error {
 		return ErrDeviceNotOpen
 	}
 
-	cbw, err := BuildSetBacklightCmd(level)
-	if err != nil {
-		return err
-	}
+	cbw := d.Profile.BacklightCommand(level)
 
 	status, err := d.scsiCommand(cbw, nil)
 	if err != nil {
@@ -617,15 +632,13 @@ func (d *Device) DisplayBuffer(buffer []byte) error {
 		return ErrDeviceNotOpen
 	}
 
-	expectedSize := d.Info.BufferSize
+	expectedSize := d.Profile.BufferSize()
 	if len(buffer) != expectedSize {
 		return fmt.Errorf("%w: got %d bytes, expected %d", ErrBufferSizeMismatch, len(buffer), expectedSize)
 	}
 
-	cbw, err := BuildFullScreenBlitCmd()
-	if err != nil {
-		return err
-	}
+	// Build blit command using profile
+	cbw := d.Profile.BlitCommand(0, 0, d.Profile.Width(), d.Profile.Height(), len(buffer))
 
 	status, err := d.scsiCommand(cbw, buffer)
 	if err != nil {
@@ -640,25 +653,25 @@ func (d *Device) DisplayBuffer(buffer []byte) error {
 
 // DisplaySolidColor fills the screen with a solid color.
 func (d *Device) DisplaySolidColor(r, g, b uint8) error {
-	buffer := CreateSolidColorBuffer(r, g, b)
+	buffer := CreateSolidColorBufferWithSize(r, g, b, d.Profile.Width(), d.Profile.Height())
 	return d.DisplayBuffer(buffer)
 }
 
 // DisplayTestPattern shows a 4-color quadrant test pattern.
 func (d *Device) DisplayTestPattern() error {
-	buffer := CreateTestPatternBuffer()
+	buffer := CreateTestPatternBufferWithSize(d.Profile.Width(), d.Profile.Height())
 	return d.DisplayBuffer(buffer)
 }
 
 // DisplayColorBars shows an 8-color bar test pattern.
 func (d *Device) DisplayColorBars() error {
-	buffer := CreateColorBarsBuffer()
+	buffer := CreateColorBarsBufferWithSize(d.Profile.Width(), d.Profile.Height())
 	return d.DisplayBuffer(buffer)
 }
 
 // DisplayImage converts and displays a Go image.
 func (d *Device) DisplayImage(img image.Image) error {
-	buffer := ImageToRGB565Buffer(img)
+	buffer := d.Profile.ConvertImage(img)
 	return d.DisplayBuffer(buffer)
 }
 

@@ -46,6 +46,10 @@ type Config struct {
 	// Selected USB display device
 	Device USBDevice `json:"device"`
 
+	// Device profile ID (e.g., "qtkeji", "generic")
+	// If empty, profile is auto-detected from VID/PID
+	ProfileID string `json:"profile_id,omitempty"`
+
 	// Display settings
 	Brightness int `json:"brightness,omitempty"` // 0-7, default 7
 
@@ -186,4 +190,24 @@ func GetTheme() (string, error) {
 		return "", err
 	}
 	return cfg.Theme, nil
+}
+
+// SetProfileID updates the device profile ID and saves the config.
+func SetProfileID(profileID string) error {
+	cfg, err := Load()
+	if err != nil {
+		cfg = DefaultConfig()
+	}
+
+	cfg.ProfileID = profileID
+	return Save(cfg)
+}
+
+// GetProfileID returns the currently configured device profile ID.
+func GetProfileID() (string, error) {
+	cfg, err := Load()
+	if err != nil {
+		return "", err
+	}
+	return cfg.ProfileID, nil
 }

@@ -6,20 +6,36 @@ import "fmt"
 // getTemplateFiles returns the template files for a new theme.
 func getTemplateFiles(themeName string) map[string]string {
 	return map[string]string{
-		"package.json":               packageJSON(themeName),
-		"vite.config.js":             viteConfig(),
-		"index.html":                 indexHTML(themeName),
-		"src/main.jsx":               mainJSX(),
-		"src/App.jsx":                appJSX(),
-		"src/App.css":                appCSS(),
-		"src/hooks/useSensorData.js": useSensorDataHook(),
-		"dist/index.html":            distIndexHTML(themeName),
+		// Config files
+		"package.json":       packageJSON(themeName),
+		"tsconfig.json":      tsconfigJSON(),
+		"tsconfig.node.json": tsconfigNodeJSON(),
+		"vite.config.ts":     viteConfigTS(),
+		"eslint.config.js":   eslintConfig(),
+		"index.html":         indexHTML(themeName),
+		".gitignore":         gitignore(),
+
+		// Source files
+		"src/main.tsx":      mainTSX(),
+		"src/App.tsx":       appTSX(),
+		"src/App.css":       appCSS(),
+		"src/vite-env.d.ts": viteEnvDTS(),
+
+		// SDK
+		"lib/sensorpanel/index.ts":  sdkIndexTS(),
+		"lib/sensorpanel/types.ts":  sdkTypesTS(),
+		"lib/sensorpanel/client.ts": sdkClientTS(),
+		"lib/sensorpanel/hooks.ts":  sdkHooksTS(),
+
+		// Pre-built dist (works immediately)
+		"dist/index.html": distIndexHTML(themeName),
 	}
 }
 
 func packageJSON(name string) string {
 	return fmt.Sprintf(`{
   "name": "%s",
+  "private": true,
   "version": "1.0.0",
   "description": "A sensorpanel theme",
   "type": "module",
@@ -27,32 +43,94 @@ func packageJSON(name string) string {
   "height": 320,
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.0.0"
+    "@eslint/js": "^9.17.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "typescript": "~5.6.2",
+    "typescript-eslint": "^8.18.2",
+    "vite": "^6.0.5"
   }
 }
 `, name)
 }
 
-func viteConfig() string {
-	return `import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+func tsconfigJSON() string {
+	return `{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["src", "lib"]
+}
+`
+}
+
+func tsconfigNodeJSON() string {
+	return `{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["vite.config.ts", "eslint.config.js"]
+}
+`
+}
+
+func viteConfigTS() string {
+	return `import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: './',
+  base: "./",
+  server: {
+    port: 15173,
+    strictPort: false,
+  },
   build: {
-    outDir: 'dist',
-    assetsDir: 'assets',
-    // Inline everything for single-file output
+    outDir: "dist",
+    emptyOutDir: true,
+    assetsDir: "assets",
     assetsInlineLimit: 100000,
     cssCodeSplit: false,
     rollupOptions: {
@@ -62,10 +140,42 @@ export default defineConfig({
       },
     },
   },
-  server: {
-    port: 3000,
-  },
-})
+});
+`
+}
+
+func eslintConfig() string {
+	return `import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+import reactHooks from "eslint-plugin-react-hooks";
+import reactRefresh from "eslint-plugin-react-refresh";
+
+export default tseslint.config(
+  { ignores: ["dist", "node_modules"] },
+  {
+    extends: [
+      js.configs.recommended,
+      ...tseslint.configs.strictTypeChecked,
+    ],
+    files: ["**/*.{ts,tsx}"],
+    languageOptions: {
+      parserOptions: {
+        project: ["./tsconfig.json", "./tsconfig.node.json"],
+      },
+    },
+    plugins: {
+      "react-hooks": reactHooks,
+      "react-refresh": reactRefresh,
+    },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      "react-refresh/only-export-components": [
+        "warn",
+        { allowConstantExport: true },
+      ],
+    },
+  }
+);
 `
 }
 
@@ -75,7 +185,7 @@ func indexHTML(name string) string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=480, height=320, initial-scale=1.0" />
-    <title>%s - Sensor Panel</title>
+    <title>%s - SensorPanel</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body, #root { width: 480px; height: 320px; overflow: hidden; }
@@ -83,138 +193,120 @@ func indexHTML(name string) string {
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
 `, name)
 }
 
-func mainJSX() string {
-	return `import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-import './App.css'
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
+func gitignore() string {
+	return `node_modules/
+dist/
+*.log
+.DS_Store
 `
 }
 
-func appJSX() string {
-	return `import { useSensorData } from './hooks/useSensorData'
+func mainTSX() string {
+	return `import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App";
+import "./App.css";
+
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Root element not found");
+
+createRoot(rootElement).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+);
+`
+}
+
+func appTSX() string {
+	return `import { useSensorData, useConnectionStatus, formatRate } from "../lib/sensorpanel";
+import "./App.css";
 
 function App() {
-  const data = useSensorData()
+  const data = useSensorData();
+  const status = useConnectionStatus();
 
-  const formatTemp = (temp) => temp != null ? ` + "`${temp.toFixed(0)}°C`" + ` : '--°C'
-  const formatPercent = (pct) => pct != null ? ` + "`${pct.toFixed(0)}%`" + ` : '--%'
-  const formatBytes = (bytes) => {
-    if (bytes == null) return '--'
-    if (bytes < 1024) return ` + "`${bytes} B/s`" + `
-    if (bytes < 1024 * 1024) return ` + "`${(bytes / 1024).toFixed(1)} KB/s`" + `
-    return ` + "`${(bytes / 1024 / 1024).toFixed(1)} MB/s`" + `
+  if (status === "connecting") {
+    return <div className="status">Connecting to SensorPanel...</div>;
+  }
+
+  if (status === "error" || status === "disconnected") {
+    return (
+      <div className="status error">
+        Disconnected. Retrying...
+        <br />
+        <small>Make sure 'sensorpanel theme dev' is running</small>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return <div className="status">Waiting for data...</div>;
   }
 
   return (
     <div className="dashboard">
-      {/* CPU Section */}
-      <section className="section cpu">
-        <div className="section-header">
-          <span className="label">CPU</span>
-          <span className="temp">{formatTemp(data.cpu?.temperature)}</span>
-          <span className="freq">{data.cpu?.frequency_mhz?.toFixed(0) || '--'} MHz</span>
-        </div>
-        <div className="bar-container">
-          <div 
-            className="bar cpu-bar" 
-            style={{ width: ` + "`${data.cpu?.load_percent || 0}%`" + ` }}
-          />
-          <span className="bar-text">{formatPercent(data.cpu?.load_percent)}</span>
-        </div>
-      </section>
+      <div className="metric cpu">
+        <div className="label">CPU</div>
+        <div className="value">{data.cpu.load.toFixed(0)}%</div>
+        <div className="sub">{data.cpu.temperature?.toFixed(0) ?? "--"}°C</div>
+      </div>
 
-      {/* GPU Section */}
-      <section className="section gpu">
-        <div className="section-header">
-          <span className="label">GPU</span>
-          <span className="temp">{formatTemp(data.gpu?.temperature)}</span>
-          <span className="info">
-            {data.gpu?.memory_used_mb?.toFixed(0) || '--'}/
-            {data.gpu?.memory_total_mb?.toFixed(0) || '--'} MB
-          </span>
-        </div>
-        <div className="bar-container">
-          <div 
-            className="bar gpu-bar" 
-            style={{ width: ` + "`${data.gpu?.load_percent || 0}%`" + ` }}
-          />
-          <span className="bar-text">{formatPercent(data.gpu?.load_percent)}</span>
-        </div>
-      </section>
+      <div className="metric gpu">
+        <div className="label">GPU</div>
+        <div className="value">{data.gpu.load?.toFixed(0) ?? "--"}%</div>
+        <div className="sub">{data.gpu.temperature?.toFixed(0) ?? "--"}°C</div>
+      </div>
 
-      {/* RAM Section */}
-      <section className="section ram">
-        <div className="section-header">
-          <span className="label">RAM</span>
-          <span className="info">
-            {(data.memory?.used_mb / 1024).toFixed(1) || '--'}/
-            {(data.memory?.total_mb / 1024).toFixed(1) || '--'} GB
-          </span>
+      <div className="metric ram">
+        <div className="label">RAM</div>
+        <div className="value">{data.memory.percent.toFixed(0)}%</div>
+        <div className="sub">
+          {(data.memory.used / 1024).toFixed(1)} / {(data.memory.total / 1024).toFixed(1)} GB
         </div>
-        <div className="bar-container">
-          <div 
-            className="bar ram-bar" 
-            style={{ width: ` + "`${data.memory?.percent || 0}%`" + ` }}
-          />
-          <span className="bar-text">{formatPercent(data.memory?.percent)}</span>
-        </div>
-      </section>
+      </div>
 
-      {/* Disk Section */}
-      {data.disks?.map((disk, i) => (
-        <section key={i} className="section disk">
-          <div className="section-header">
-            <span className="label">{disk.mount_point}</span>
-            <span className="info">
-              {disk.used_gb?.toFixed(0) || '--'}/{disk.total_gb?.toFixed(0) || '--'} GB
-            </span>
-          </div>
-          <div className="bar-container">
-            <div 
-              className="bar disk-bar" 
-              style={{ width: ` + "`${disk.percent || 0}%`" + ` }}
-            />
-            <span className="bar-text">{formatPercent(disk.percent)}</span>
-          </div>
-        </section>
-      ))}
-
-      {/* Network Section */}
-      <section className="section network">
-        <div className="section-header">
-          <span className="label">NET</span>
-        </div>
-        {data.networks?.filter(n => n.rx_bytes_per_sec > 0 || n.tx_bytes_per_sec > 0).map((net, i) => (
-          <div key={i} className="net-row">
-            <span className="net-iface">{net.interface}</span>
-            <span className="net-rx">↓{formatBytes(net.rx_bytes_per_sec)}</span>
-            <span className="net-tx">↑{formatBytes(net.tx_bytes_per_sec)}</span>
-          </div>
-        ))}
-      </section>
+      <div className="metric network">
+        <div className="label">NET</div>
+        {Object.entries(data.network).length > 0 ? (
+          Object.entries(data.network).slice(0, 2).map(([iface, net]) => (
+            <div key={iface} className="net-row">
+              <span className="net-iface">{iface}</span>
+              <span className="net-rx">↓{formatRate(net.rxRate)}</span>
+              <span className="net-tx">↑{formatRate(net.txRate)}</span>
+            </div>
+          ))
+        ) : (
+          <div className="sub">No active interfaces</div>
+        )}
+      </div>
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
 `
 }
 
 func appCSS() string {
-	return `* {
+	return `:root {
+  --bg-color: #1a1a2e;
+  --card-bg: #16213e;
+  --text-primary: #eee;
+  --text-secondary: #888;
+  --accent-cpu: #e94560;
+  --accent-gpu: #0f3460;
+  --accent-ram: #533483;
+  --accent-network: #1a508b;
+}
+
+* {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -224,88 +316,85 @@ html, body, #root {
   width: 480px;
   height: 320px;
   overflow: hidden;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
-.dashboard {
-  width: 480px;
-  height: 320px;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-  color: #ffffff;
-  padding: 8px;
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg-color);
+  color: var(--text-primary);
+}
+
+.status {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.section {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
-  padding: 6px 8px;
-}
-
-.section-header {
-  display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 4px;
+  justify-content: center;
+  height: 100%;
+  font-size: 18px;
+  text-align: center;
+}
+
+.status.error {
+  color: var(--accent-cpu);
+}
+
+.status small {
+  margin-top: 8px;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
-.label {
-  font-weight: 600;
-  color: #888899;
-  min-width: 35px;
-}
-
-.temp {
-  color: #00ff88;
-  font-weight: 500;
-}
-
-.freq, .info {
-  color: #888899;
-  font-size: 11px;
-}
-
-.bar-container {
-  position: relative;
-  height: 20px;
-  background: #333344;
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.bar {
+.dashboard {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 8px;
+  padding: 8px;
   height: 100%;
-  transition: width 0.3s ease;
 }
 
-.cpu-bar { background: linear-gradient(90deg, #00d4ff, #0088cc); }
-.gpu-bar { background: linear-gradient(90deg, #00ff88, #00cc66); }
-.ram-bar { background: linear-gradient(90deg, #ff8800, #cc6600); }
-.disk-bar { background: linear-gradient(90deg, #ff0088, #cc0066); }
-
-.bar-text {
-  position: absolute;
-  top: 50%;
-  left: 8px;
-  transform: translateY(-50%);
-  font-size: 11px;
-  font-weight: 600;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+.metric {
+  background: var(--card-bg);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
+
+.metric .label {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.metric .value {
+  font-size: 36px;
+  font-weight: bold;
+  margin: 4px 0;
+}
+
+.metric .sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.metric.cpu { border-left: 4px solid var(--accent-cpu); }
+.metric.gpu { border-left: 4px solid var(--accent-gpu); }
+.metric.ram { border-left: 4px solid var(--accent-ram); }
+.metric.network { border-left: 4px solid var(--accent-network); }
 
 .net-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   font-size: 11px;
-  padding: 2px 0;
+  margin-top: 4px;
 }
 
 .net-iface {
-  color: #8800ff;
-  min-width: 60px;
+  color: var(--text-secondary);
+  min-width: 50px;
 }
 
 .net-rx { color: #00ff88; }
@@ -313,100 +402,353 @@ html, body, #root {
 `
 }
 
-func useSensorDataHook() string {
-	return `import { useState, useEffect } from 'react'
-
-// Mock data for development (shown until WebSocket connects)
-const mockData = {
-  cpu: {
-    load_percent: 45,
-    temperature: 52,
-    frequency_mhz: 3600,
-  },
-  gpu: {
-    available: true,
-    load_percent: 30,
-    temperature: 48,
-    memory_used_mb: 2048,
-    memory_total_mb: 8192,
-    power_watts: 85,
-  },
-  memory: {
-    total_mb: 32768,
-    used_mb: 16384,
-    percent: 50,
-  },
-  disks: [
-    { mount_point: '/', total_gb: 500, used_gb: 250, percent: 50 },
-  ],
-  networks: [
-    { interface: 'eth0', rx_bytes_per_sec: 1024000, tx_bytes_per_sec: 512000 },
-  ],
+func viteEnvDTS() string {
+	return `/// <reference types="vite/client" />
+`
 }
 
-export function useSensorData() {
-  const [data, setData] = useState(mockData)
+// SDK files
+
+func sdkTypesTS() string {
+	return `export interface SensorData {
+  cpu: CpuData;
+  gpu: GpuData;
+  memory: MemoryData;
+  disk: Record<string, DiskData>;
+  network: Record<string, NetworkData>;
+  timestamp?: number;
+}
+
+export interface CpuData {
+  temperature?: number;  // Celsius
+  load: number;          // 0-100
+  frequency?: number;    // MHz
+  cores?: number;
+}
+
+export interface GpuData {
+  available: boolean;
+  name?: string;
+  temperature?: number;  // Celsius
+  load?: number;         // 0-100
+  memoryUsed?: number;   // MB
+  memoryTotal?: number;  // MB
+  power?: number;        // Watts
+}
+
+export interface MemoryData {
+  used: number;          // MB
+  total: number;         // MB
+  available: number;     // MB
+  percent: number;       // 0-100
+}
+
+export interface DiskData {
+  mountpoint: string;
+  used: number;          // GB
+  total: number;         // GB
+  free: number;          // GB
+  percent: number;       // 0-100
+}
+
+export interface NetworkData {
+  interface: string;
+  rxRate: number;        // bytes/sec
+  txRate: number;        // bytes/sec
+}
+
+export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
+`
+}
+
+func sdkClientTS() string {
+	return `import type { SensorData, ConnectionStatus } from "./types";
+
+const DEFAULT_PORTS = [19847, 19848, 19849, 19850, 19851];
+const RECONNECT_DELAY = 2000;
+
+type DataListener = (data: SensorData) => void;
+type StatusListener = (status: ConnectionStatus) => void;
+
+// Transform raw JSON data from the server to our SensorData format
+function transformData(raw: Record<string, unknown>): SensorData {
+  const cpu = raw.cpu as Record<string, unknown> | undefined;
+  const gpu = raw.gpu as Record<string, unknown> | undefined;
+  const memory = raw.memory as Record<string, unknown> | undefined;
+  const disks = raw.disks as Array<Record<string, unknown>> | undefined;
+  const networks = raw.networks as Array<Record<string, unknown>> | undefined;
+
+  const diskMap: Record<string, SensorData["disk"][string]> = {};
+  if (disks) {
+    for (const d of disks) {
+      const mp = String(d.mount_point ?? "/");
+      diskMap[mp] = {
+        mountpoint: mp,
+        used: Number(d.used_gb ?? 0),
+        total: Number(d.total_gb ?? 0),
+        free: Number(d.free_gb ?? 0),
+        percent: Number(d.percent ?? 0),
+      };
+    }
+  }
+
+  const networkMap: Record<string, SensorData["network"][string]> = {};
+  if (networks) {
+    for (const n of networks) {
+      const iface = String(n.interface ?? "unknown");
+      networkMap[iface] = {
+        interface: iface,
+        rxRate: Number(n.rx_bytes_per_sec ?? 0),
+        txRate: Number(n.tx_bytes_per_sec ?? 0),
+      };
+    }
+  }
+
+  return {
+    cpu: {
+      temperature: cpu?.temperature as number | undefined,
+      load: Number(cpu?.load_percent ?? 0),
+      frequency: cpu?.frequency_mhz as number | undefined,
+      cores: cpu?.core_count as number | undefined,
+    },
+    gpu: {
+      available: Boolean(gpu?.available),
+      name: gpu?.name as string | undefined,
+      temperature: gpu?.temperature as number | undefined,
+      load: gpu?.load_percent as number | undefined,
+      memoryUsed: gpu?.memory_used_mb as number | undefined,
+      memoryTotal: gpu?.memory_total_mb as number | undefined,
+      power: gpu?.power_watts as number | undefined,
+    },
+    memory: {
+      used: Number(memory?.used_mb ?? 0),
+      total: Number(memory?.total_mb ?? 0),
+      available: Number(memory?.available_mb ?? 0),
+      percent: Number(memory?.percent ?? 0),
+    },
+    disk: diskMap,
+    network: networkMap,
+    timestamp: Date.now(),
+  };
+}
+
+class SensorPanelClient {
+  private ws: WebSocket | null = null;
+  private dataListeners = new Set<DataListener>();
+  private statusListeners = new Set<StatusListener>();
+  private status: ConnectionStatus = "disconnected";
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private currentPortIndex = 0;
+
+  async connect(): Promise<void> {
+    // Check for ?ws=PORT query param first
+    const params = new URLSearchParams(window.location.search);
+    const wsPortParam = params.get("ws");
+    
+    if (wsPortParam) {
+      const port = parseInt(wsPortParam, 10);
+      if (!isNaN(port)) {
+        try {
+          await this.tryConnect(port);
+          return;
+        } catch {
+          // Fall through to auto-discovery
+        }
+      }
+    }
+
+    this.setStatus("connecting");
+
+    for (let i = 0; i < DEFAULT_PORTS.length; i++) {
+      const port = DEFAULT_PORTS[(this.currentPortIndex + i) % DEFAULT_PORTS.length];
+      try {
+        await this.tryConnect(port);
+        this.currentPortIndex = DEFAULT_PORTS.indexOf(port);
+        return;
+      } catch {
+        continue;
+      }
+    }
+
+    this.setStatus("error");
+    this.scheduleReconnect();
+  }
+
+  private tryConnect(port: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const wsHost = window.location.hostname || "localhost";
+      const ws = new WebSocket(` + "`ws://${wsHost}:${port}/ws`" + `);
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error("Connection timeout"));
+      }, 1000);
+
+      ws.onopen = () => {
+        clearTimeout(timeout);
+        this.ws = ws;
+        this.setStatus("connected");
+        this.setupListeners();
+        resolve();
+      };
+
+      ws.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error("Connection failed"));
+      };
+    });
+  }
+
+  private setupListeners(): void {
+    if (!this.ws) return;
+
+    this.ws.onmessage = (event: MessageEvent<string>) => {
+      try {
+        const raw = JSON.parse(event.data) as Record<string, unknown>;
+        const data = transformData(raw);
+        this.dataListeners.forEach((fn) => fn(data));
+      } catch {
+        console.error("Failed to parse sensor data");
+      }
+    };
+
+    this.ws.onclose = () => {
+      this.setStatus("disconnected");
+      this.scheduleReconnect();
+    };
+
+    this.ws.onerror = () => {
+      this.setStatus("error");
+    };
+  }
+
+  private setStatus(status: ConnectionStatus): void {
+    this.status = status;
+    this.statusListeners.forEach((fn) => fn(status));
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect();
+    }, RECONNECT_DELAY);
+  }
+
+  subscribe(callback: DataListener): () => void {
+    this.dataListeners.add(callback);
+    return () => { this.dataListeners.delete(callback); };
+  }
+
+  onStatusChange(callback: StatusListener): () => void {
+    this.statusListeners.add(callback);
+    callback(this.status);
+    return () => { this.statusListeners.delete(callback); };
+  }
+
+  disconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.ws?.close();
+    this.ws = null;
+    this.setStatus("disconnected");
+  }
+
+  getStatus(): ConnectionStatus {
+    return this.status;
+  }
+}
+
+export const client = new SensorPanelClient();
+export { SensorPanelClient };
+`
+}
+
+func sdkHooksTS() string {
+	return `import { useState, useEffect } from "react";
+import { client } from "./client";
+import type { SensorData, ConnectionStatus, CpuData, GpuData, MemoryData } from "./types";
+
+export function useSensorData(): SensorData | null {
+  const [data, setData] = useState<SensorData | null>(null);
 
   useEffect(() => {
-    // Get WebSocket port from query string (?ws=PORT) or use current page port
-    const params = new URLSearchParams(window.location.search)
-    const wsPort = params.get('ws') || window.location.port
-    const wsHost = window.location.hostname || 'localhost'
-    const wsUrl = ` + "`ws://${wsHost}:${wsPort}/ws`" + `
-    
-    let ws = null
-    let reconnectTimer = null
-
-    const connect = () => {
-      try {
-        ws = new WebSocket(wsUrl)
-        
-        ws.onopen = () => {
-          console.log('WebSocket connected to', wsUrl)
-        }
-        
-        ws.onmessage = (event) => {
-          try {
-            const newData = JSON.parse(event.data)
-            setData(newData)
-          } catch (e) {
-            console.error('Failed to parse sensor data:', e)
-          }
-        }
-
-        ws.onclose = () => {
-          // Try to reconnect after 2 seconds
-          reconnectTimer = setTimeout(connect, 2000)
-        }
-
-        ws.onerror = () => {
-          ws.close()
-        }
-      } catch (e) {
-        // WebSocket not available, use mock data
-        console.log('WebSocket not available, using mock data')
-      }
-    }
-
-    connect()
-
-    // Also listen for postMessage (for preview mode)
-    const handleMessage = (event) => {
-      if (event.data && event.data.type === 'sensorData') {
-        setData(event.data.data)
-      }
-    }
-    window.addEventListener('message', handleMessage)
-
+    void client.connect();
+    const unsubscribe = client.subscribe(setData);
     return () => {
-      if (ws) ws.close()
-      if (reconnectTimer) clearTimeout(reconnectTimer)
-      window.removeEventListener('message', handleMessage)
-    }
-  }, [])
+      unsubscribe();
+    };
+  }, []);
 
-  return data
+  return data;
 }
+
+export function useConnectionStatus(): ConnectionStatus {
+  const [status, setStatus] = useState<ConnectionStatus>(client.getStatus());
+
+  useEffect(() => {
+    return client.onStatusChange(setStatus);
+  }, []);
+
+  return status;
+}
+
+export function useCpuData(): CpuData | null {
+  const data = useSensorData();
+  return data?.cpu ?? null;
+}
+
+export function useGpuData(): GpuData | null {
+  const data = useSensorData();
+  return data?.gpu ?? null;
+}
+
+export function useMemoryData(): MemoryData | null {
+  const data = useSensorData();
+  return data?.memory ?? null;
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return ` + "`${(bytes / 1e9).toFixed(1)} GB`" + `;
+  if (bytes >= 1e6) return ` + "`${(bytes / 1e6).toFixed(1)} MB`" + `;
+  if (bytes >= 1e3) return ` + "`${(bytes / 1e3).toFixed(1)} KB`" + `;
+  return ` + "`${bytes} B`" + `;
+}
+
+export function formatRate(bytesPerSec: number): string {
+  if (bytesPerSec >= 1e6) return ` + "`${(bytesPerSec / 1e6).toFixed(1)} MB/s`" + `;
+  if (bytesPerSec >= 1e3) return ` + "`${(bytesPerSec / 1e3).toFixed(0)} KB/s`" + `;
+  return ` + "`${bytesPerSec} B/s`" + `;
+}
+`
+}
+
+func sdkIndexTS() string {
+	return `// Client
+export { client, SensorPanelClient } from "./client";
+
+// Hooks
+export {
+  useSensorData,
+  useConnectionStatus,
+  useCpuData,
+  useGpuData,
+  useMemoryData,
+  formatBytes,
+  formatRate,
+} from "./hooks";
+
+// Types
+export type {
+  SensorData,
+  CpuData,
+  GpuData,
+  MemoryData,
+  DiskData,
+  NetworkData,
+  ConnectionStatus,
+} from "./types";
 `
 }
 
@@ -418,155 +760,164 @@ func distIndexHTML(name string) string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=480, height=320, initial-scale=1.0" />
-  <title>%s - Sensor Panel</title>
+  <title>%s - SensorPanel</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 480px; height: 320px; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
-    
-    .dashboard {
-      width: 480px; height: 320px;
-      background: linear-gradient(135deg, #1a1a2e 0%%, #16213e 100%%);
-      color: #fff; padding: 8px;
-      display: flex; flex-direction: column; gap: 6px;
+    :root {
+      --bg-color: #1a1a2e;
+      --card-bg: #16213e;
+      --text-primary: #eee;
+      --text-secondary: #888;
+      --accent-cpu: #e94560;
+      --accent-gpu: #0f3460;
+      --accent-ram: #533483;
+      --accent-network: #1a508b;
     }
-    .section { background: rgba(255,255,255,0.05); border-radius: 4px; padding: 6px 8px; }
-    .section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; font-size: 12px; }
-    .label { font-weight: 600; color: #888899; min-width: 35px; }
-    .temp { color: #00ff88; font-weight: 500; }
-    .info { color: #888899; font-size: 11px; }
-    .bar-container { position: relative; height: 20px; background: #333344; border-radius: 3px; overflow: hidden; }
-    .bar { height: 100%%; transition: width 0.3s ease; }
-    .cpu-bar { background: linear-gradient(90deg, #00d4ff, #0088cc); }
-    .gpu-bar { background: linear-gradient(90deg, #00ff88, #00cc66); }
-    .ram-bar { background: linear-gradient(90deg, #ff8800, #cc6600); }
-    .disk-bar { background: linear-gradient(90deg, #ff0088, #cc0066); }
-    .bar-text { position: absolute; top: 50%%; left: 8px; transform: translateY(-50%%); font-size: 11px; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
-    .net-row { display: flex; gap: 10px; font-size: 11px; padding: 2px 0; }
-    .net-iface { color: #8800ff; min-width: 60px; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 480px; height: 320px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-color); color: var(--text-primary); }
+    .status { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%%; font-size: 18px; text-align: center; }
+    .status.error { color: var(--accent-cpu); }
+    .status small { margin-top: 8px; color: var(--text-secondary); font-size: 12px; }
+    .dashboard { display: grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); gap: 8px; padding: 8px; height: 100%%; }
+    .metric { background: var(--card-bg); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; justify-content: center; }
+    .metric .label { font-size: 14px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
+    .metric .value { font-size: 36px; font-weight: bold; margin: 4px 0; }
+    .metric .sub { font-size: 12px; color: var(--text-secondary); }
+    .metric.cpu { border-left: 4px solid var(--accent-cpu); }
+    .metric.gpu { border-left: 4px solid var(--accent-gpu); }
+    .metric.ram { border-left: 4px solid var(--accent-ram); }
+    .metric.network { border-left: 4px solid var(--accent-network); }
+    .net-row { display: flex; gap: 8px; font-size: 11px; margin-top: 4px; }
+    .net-iface { color: var(--text-secondary); min-width: 50px; }
     .net-rx { color: #00ff88; }
     .net-tx { color: #ff8800; }
   </style>
 </head>
 <body>
-  <div class="dashboard" id="app">
-    <section class="section">
-      <div class="section-header">
-        <span class="label">CPU</span>
-        <span class="temp" id="cpu-temp">--°C</span>
-        <span class="info" id="cpu-freq">-- MHz</span>
-      </div>
-      <div class="bar-container">
-        <div class="bar cpu-bar" id="cpu-bar" style="width: 0%%"></div>
-        <span class="bar-text" id="cpu-pct">--%%</span>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-header">
-        <span class="label">GPU</span>
-        <span class="temp" id="gpu-temp">--°C</span>
-        <span class="info" id="gpu-mem">--/-- MB</span>
-      </div>
-      <div class="bar-container">
-        <div class="bar gpu-bar" id="gpu-bar" style="width: 0%%"></div>
-        <span class="bar-text" id="gpu-pct">--%%</span>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-header">
-        <span class="label">RAM</span>
-        <span class="info" id="ram-info">--/-- GB</span>
-      </div>
-      <div class="bar-container">
-        <div class="bar ram-bar" id="ram-bar" style="width: 0%%"></div>
-        <span class="bar-text" id="ram-pct">--%%</span>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-header">
-        <span class="label" id="disk-label">/</span>
-        <span class="info" id="disk-info">--/-- GB</span>
-      </div>
-      <div class="bar-container">
-        <div class="bar disk-bar" id="disk-bar" style="width: 0%%"></div>
-        <span class="bar-text" id="disk-pct">--%%</span>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-header">
-        <span class="label">NET</span>
-      </div>
-      <div id="net-container"></div>
-    </section>
-  </div>
+  <div id="app" class="status">Connecting to SensorPanel...</div>
 
   <script>
-    const $ = (id) => document.getElementById(id);
-    const fmt = (v, suffix='') => v != null ? v.toFixed(0) + suffix : '--' + suffix;
-    const fmtBytes = (b) => {
-      if (b == null) return '--';
-      if (b < 1024) return b + ' B/s';
-      if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB/s';
-      return (b/1024/1024).toFixed(1) + ' MB/s';
+    const DEFAULT_PORTS = [19847, 19848, 19849, 19850, 19851];
+    const RECONNECT_DELAY = 2000;
+    let ws = null;
+    let reconnectTimer = null;
+    let currentPortIndex = 0;
+
+    const fmtRate = (b) => {
+      if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB/s';
+      if (b >= 1e3) return (b / 1e3).toFixed(0) + ' KB/s';
+      return b + ' B/s';
     };
 
-    function update(d) {
-      if (d.cpu) {
-        $('cpu-temp').textContent = fmt(d.cpu.temperature, '°C');
-        $('cpu-freq').textContent = fmt(d.cpu.frequency_mhz, ' MHz');
-        $('cpu-bar').style.width = (d.cpu.load_percent || 0) + '%%';
-        $('cpu-pct').textContent = fmt(d.cpu.load_percent, '%%');
-      }
-      if (d.gpu) {
-        $('gpu-temp').textContent = fmt(d.gpu.temperature, '°C');
-        $('gpu-mem').textContent = fmt(d.gpu.memory_used_mb) + '/' + fmt(d.gpu.memory_total_mb) + ' MB';
-        $('gpu-bar').style.width = (d.gpu.load_percent || 0) + '%%';
-        $('gpu-pct').textContent = fmt(d.gpu.load_percent, '%%');
-      }
-      if (d.memory) {
-        $('ram-info').textContent = (d.memory.used_mb/1024).toFixed(1) + '/' + (d.memory.total_mb/1024).toFixed(1) + ' GB';
-        $('ram-bar').style.width = (d.memory.percent || 0) + '%%';
-        $('ram-pct').textContent = fmt(d.memory.percent, '%%');
-      }
-      if (d.disks && d.disks.length > 0) {
-        const disk = d.disks[0];
-        $('disk-label').textContent = disk.mount_point || '/';
-        $('disk-info').textContent = fmt(disk.used_gb) + '/' + fmt(disk.total_gb) + ' GB';
-        $('disk-bar').style.width = (disk.percent || 0) + '%%';
-        $('disk-pct').textContent = fmt(disk.percent, '%%');
-      }
-      if (d.networks) {
-        const container = $('net-container');
-        container.innerHTML = d.networks
-          .filter(n => n.rx_bytes_per_sec > 0 || n.tx_bytes_per_sec > 0)
-          .map(n => `+"`<div class=\"net-row\"><span class=\"net-iface\">${n.interface}</span><span class=\"net-rx\">↓${fmtBytes(n.rx_bytes_per_sec)}</span><span class=\"net-tx\">↑${fmtBytes(n.tx_bytes_per_sec)}</span></div>`"+`)
-          .join('');
-      }
+    function render(data) {
+      const app = document.getElementById('app');
+      
+      const networks = (data.networks || [])
+        .filter(n => n.rx_bytes_per_sec > 0 || n.tx_bytes_per_sec > 0)
+        .slice(0, 2)
+        .map(n => `+"`<div class=\"net-row\"><span class=\"net-iface\">${n.interface}</span><span class=\"net-rx\">↓${fmtRate(n.rx_bytes_per_sec)}</span><span class=\"net-tx\">↑${fmtRate(n.tx_bytes_per_sec)}</span></div>`"+`)
+        .join('');
+
+      app.className = 'dashboard';
+      app.innerHTML = `+"`"+`
+        <div class="metric cpu">
+          <div class="label">CPU</div>
+          <div class="value">${(data.cpu?.load_percent ?? 0).toFixed(0)}%%</div>
+          <div class="sub">${data.cpu?.temperature?.toFixed(0) ?? '--'}°C</div>
+        </div>
+        <div class="metric gpu">
+          <div class="label">GPU</div>
+          <div class="value">${(data.gpu?.load_percent ?? 0).toFixed(0)}%%</div>
+          <div class="sub">${data.gpu?.temperature?.toFixed(0) ?? '--'}°C</div>
+        </div>
+        <div class="metric ram">
+          <div class="label">RAM</div>
+          <div class="value">${(data.memory?.percent ?? 0).toFixed(0)}%%</div>
+          <div class="sub">${((data.memory?.used_mb ?? 0) / 1024).toFixed(1)} / ${((data.memory?.total_mb ?? 0) / 1024).toFixed(1)} GB</div>
+        </div>
+        <div class="metric network">
+          <div class="label">NET</div>
+          ${networks || '<div class="sub">No active interfaces</div>'}
+        </div>
+      `+"`"+`;
     }
 
-    // Connect to WebSocket
-    // Use ?ws=PORT query param to specify custom WebSocket port (for dev mode)
-    const params = new URLSearchParams(location.search);
-    const wsPort = params.get('ws') || location.port;
-    const wsUrl = `+"`ws://${location.hostname}:${wsPort}/ws`"+`;
-    let ws, reconnect;
-    function connect() {
-      try {
-        ws = new WebSocket(wsUrl);
-        ws.onmessage = (e) => { try { update(JSON.parse(e.data)); } catch(err) {} };
-        ws.onclose = () => { reconnect = setTimeout(connect, 2000); };
-        ws.onerror = () => ws.close();
-      } catch(e) {}
+    function showError(msg) {
+      const app = document.getElementById('app');
+      app.className = 'status error';
+      app.innerHTML = msg + '<br><small>Make sure \'sensorpanel theme dev\' is running</small>';
     }
-    connect();
 
-    // Also accept postMessage for preview
+    async function tryConnect(port) {
+      return new Promise((resolve, reject) => {
+        const wsHost = location.hostname || 'localhost';
+        const socket = new WebSocket(`+"`ws://${wsHost}:${port}/ws`"+`);
+        const timeout = setTimeout(() => {
+          socket.close();
+          reject(new Error('timeout'));
+        }, 1000);
+
+        socket.onopen = () => {
+          clearTimeout(timeout);
+          ws = socket;
+          setupListeners();
+          resolve();
+        };
+
+        socket.onerror = () => {
+          clearTimeout(timeout);
+          reject(new Error('failed'));
+        };
+      });
+    }
+
+    function setupListeners() {
+      if (!ws) return;
+      ws.onmessage = (e) => {
+        try { render(JSON.parse(e.data)); } catch {}
+      };
+      ws.onclose = () => scheduleReconnect();
+      ws.onerror = () => {};
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      showError('Disconnected. Retrying...');
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, RECONNECT_DELAY);
+    }
+
+    async function connect() {
+      // Check for ?ws=PORT
+      const params = new URLSearchParams(location.search);
+      const wsPort = params.get('ws');
+      if (wsPort) {
+        try {
+          await tryConnect(parseInt(wsPort, 10));
+          return;
+        } catch {}
+      }
+
+      for (let i = 0; i < DEFAULT_PORTS.length; i++) {
+        const port = DEFAULT_PORTS[(currentPortIndex + i) %% DEFAULT_PORTS.length];
+        try {
+          await tryConnect(port);
+          currentPortIndex = DEFAULT_PORTS.indexOf(port);
+          return;
+        } catch {}
+      }
+
+      showError('Connection failed');
+      scheduleReconnect();
+    }
+
+    // Also accept postMessage for preview mode
     window.addEventListener('message', (e) => {
-      if (e.data && e.data.type === 'sensorData') update(e.data.data);
+      if (e.data?.type === 'sensorData') render(e.data.data);
     });
+
+    connect();
   </script>
 </body>
 </html>
