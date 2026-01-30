@@ -108,7 +108,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Warning: failed to set brightness: %v\n", err)
 	}
 
-	// Configure sensors
+	// Configure sensors - use modular CollectorV2
 	sensorConfig := &sensors.Config{
 		ShowCPU:          runShowCPU,
 		ShowGPU:          runShowGPU,
@@ -119,7 +119,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		NetworkInterface: "*",
 		GPUMethod:        "auto",
 	}
-	collector := sensors.NewCollector(sensorConfig)
+	collector := sensors.NewCollectorV2(sensorConfig)
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -136,7 +136,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 }
 
 // runWithTheme runs the dashboard using a theme with headless browser rendering.
-func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.Config, themeName string, sigChan chan os.Signal) error {
+func runWithTheme(dev *panel.Device, collector *sensors.CollectorV2, cfg *config.Config, themeName string, sigChan chan os.Signal) error {
 	// Load the theme
 	t, err := theme.Load(themeName)
 	if err != nil {
@@ -195,7 +195,7 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 	fmt.Printf("Dashboard running with theme (%.1fs interval). Press Ctrl+C to stop.\n", runInterval)
 
 	// Initial collection to prime CPU load calculation
-	collector.Collect()
+	collector.CollectAll()
 	time.Sleep(100 * time.Millisecond)
 
 	// Main loop
@@ -230,7 +230,7 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 }
 
 // runWithBuiltinRenderer runs the dashboard using the built-in bitmap renderer.
-func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.Collector, sigChan chan os.Signal) error {
+func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.CollectorV2, sigChan chan os.Signal) error {
 	// Configure renderer with device profile dimensions
 	renderConfig := &renderer.Config{
 		Width:  dev.Profile.Width(),
@@ -241,7 +241,7 @@ func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.Collector, sig
 	fmt.Printf("Dashboard running (%.1fs interval). Press Ctrl+C to stop.\n", runInterval)
 
 	// Initial collection to prime CPU load calculation
-	collector.Collect()
+	collector.CollectAll()
 	time.Sleep(100 * time.Millisecond)
 
 	// Main loop
@@ -271,9 +271,10 @@ func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.Collector, sig
 	}
 }
 
-func renderFrame(dev *panel.Device, collector *sensors.Collector, render *renderer.Renderer, frameCount *int) {
-	// Collect sensor data
-	data := collector.Collect()
+func renderFrame(dev *panel.Device, collector *sensors.CollectorV2, render *renderer.Renderer, frameCount *int) {
+	// Collect sensor data and convert to legacy format for renderer
+	collected := collector.CollectAll()
+	data := collector.ToLegacyData(collected)
 
 	// Render to image
 	img := render.Render(data)
@@ -289,9 +290,10 @@ func renderFrame(dev *panel.Device, collector *sensors.Collector, render *render
 }
 
 // renderThemeFrame collects sensor data, broadcasts to theme, captures screenshot, and sends to display.
-func renderThemeFrame(dev *panel.Device, collector *sensors.Collector, srv *server.Server, browserRenderer *browser.Renderer, frameCount *int) error {
-	// Collect sensor data
-	data := collector.Collect()
+func renderThemeFrame(dev *panel.Device, collector *sensors.CollectorV2, srv *server.Server, browserRenderer *browser.Renderer, frameCount *int) error {
+	// Collect sensor data and convert to legacy format
+	collected := collector.CollectAll()
+	data := collector.ToLegacyData(collected)
 
 	// Convert to JSON-friendly format for the theme
 	jsonData := sensorDataToJSON(data)

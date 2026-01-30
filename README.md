@@ -121,6 +121,16 @@ sensorpanel panel off          # Turn backlight off
 sensorpanel panel brightness 5 # Set brightness (0-7)
 ```
 
+### Sensor Management
+
+```bash
+sensorpanel sensor list              # List all registered sensors
+sensorpanel sensor list -a           # List only available sensors on this system
+sensorpanel sensor types             # Generate TypeScript types for all sensors
+sensorpanel sensor types -o types.ts # Output to file
+sensorpanel sensor create            # Interactive wizard to create a new sensor
+```
+
 ### Other Commands
 
 ```bash
@@ -148,6 +158,58 @@ This prompts you for:
 It generates a skeleton Go file in `pkg/device/` that you can customize.
 
 See [docs/adding-devices.md](docs/adding-devices.md) for detailed protocol research tips.
+
+## Adding Custom Sensors
+
+SensorPanel uses a modular sensor provider system. Each sensor is a Go provider that implements the `sensors.Provider` interface.
+
+### Built-in Sensors
+
+| Sensor | Platforms | Description |
+|--------|-----------|-------------|
+| `cpu` | Linux | CPU load, temperature, frequency |
+| `memory` | Linux | RAM usage |
+| `disk` | Linux, macOS, Windows | Disk usage per mount point |
+| `network` | Linux | Network interface statistics |
+| `nvidia_gpu` | Linux | NVIDIA GPU via nvidia-smi |
+| `amd_gpu` | Linux | AMD GPU via sysfs |
+
+### Create a Custom Sensor
+
+```bash
+# Run the interactive wizard
+./sensorpanel sensor create
+```
+
+This prompts you for:
+- Sensor ID and name
+- Target platform (Linux, macOS, Windows, or all)
+- Category (system, gpu, storage, network, power)
+- Field definitions with types and units
+
+It generates a skeleton Go file in `pkg/sensors/` that you can customize.
+
+### Adding Platform-Specific Implementations
+
+If a sensor already exists but only for certain platforms, running `sensor create` with the same ID will prompt you to add an implementation for a different platform:
+
+```bash
+./sensorpanel sensor create
+Sensor ID: cpu
+Sensor 'cpu' already exists for platforms: linux
+Which platform would you like to add?
+  1. linux
+  2. darwin (macOS)
+  3. windows
+```
+
+### Update TypeScript Types
+
+After adding or modifying sensors, regenerate the TypeScript types for themes:
+
+```bash
+./sensorpanel sensor types -o path/to/theme/lib/sensorpanel/types.ts
+```
 
 ## Theme Development
 
