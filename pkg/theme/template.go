@@ -410,7 +410,11 @@ func viteEnvDTS() string {
 // SDK files
 
 func sdkTypesTS() string {
-	return `export interface SensorData {
+	// Theme SDK types - designed for theme developers.
+	// These types represent the transformed data that themes receive.
+	// The client.ts transforms raw sensor data to this format.
+	return `/** Sensor data provided to themes */
+export interface SensorData {
   cpu: CpuData;
   gpu: GpuData;
   memory: MemoryData;
@@ -419,42 +423,70 @@ func sdkTypesTS() string {
   timestamp?: number;
 }
 
+/** CPU sensor data */
 export interface CpuData {
-  temperature?: number;  // Celsius
-  load: number;          // 0-100
-  frequency?: number;    // MHz
+  /** CPU load percentage (0-100) */
+  load: number;
+  /** CPU temperature in Celsius */
+  temperature?: number;
+  /** CPU frequency in MHz */
+  frequency?: number;
+  /** Number of CPU cores */
   cores?: number;
 }
 
+/** GPU sensor data (NVIDIA or AMD) */
 export interface GpuData {
+  /** Whether a GPU is available */
   available: boolean;
+  /** GPU name/model */
   name?: string;
-  temperature?: number;  // Celsius
-  load?: number;         // 0-100
-  memoryUsed?: number;   // MB
-  memoryTotal?: number;  // MB
-  power?: number;        // Watts
+  /** GPU temperature in Celsius */
+  temperature?: number;
+  /** GPU load percentage (0-100) */
+  load?: number;
+  /** Memory used in MB */
+  memoryUsed?: number;
+  /** Total memory in MB */
+  memoryTotal?: number;
+  /** Power draw in Watts */
+  power?: number;
 }
 
+/** Memory sensor data */
 export interface MemoryData {
-  used: number;          // MB
-  total: number;         // MB
-  available: number;     // MB
-  percent: number;       // 0-100
+  /** Used memory in MB */
+  used: number;
+  /** Total memory in MB */
+  total: number;
+  /** Available memory in MB */
+  available: number;
+  /** Memory usage percentage (0-100) */
+  percent: number;
 }
 
+/** Disk sensor data */
 export interface DiskData {
+  /** Mount point path */
   mountpoint: string;
-  used: number;          // GB
-  total: number;         // GB
-  free: number;          // GB
-  percent: number;       // 0-100
+  /** Used space in GB */
+  used: number;
+  /** Total space in GB */
+  total: number;
+  /** Free space in GB */
+  free: number;
+  /** Usage percentage (0-100) */
+  percent: number;
 }
 
+/** Network interface sensor data */
 export interface NetworkData {
+  /** Interface name */
   interface: string;
-  rxRate: number;        // bytes/sec
-  txRate: number;        // bytes/sec
+  /** Receive rate in bytes/sec */
+  rxRate: number;
+  /** Transmit rate in bytes/sec */
+  txRate: number;
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
