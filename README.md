@@ -101,6 +101,14 @@ sensorpanel panel brightness 5 # Set brightness (0-7)
 sensorpanel benchmark          # Measure FPS performance
 ```
 
+### Cleanup
+
+```bash
+sensorpanel prune              # Remove config and cache (keeps themes)
+sensorpanel prune --dry-run    # Show what would be deleted
+sensorpanel prune --all        # Also remove themes
+```
+
 ## Theme Development
 
 Themes are React applications that receive sensor data via WebSocket.
