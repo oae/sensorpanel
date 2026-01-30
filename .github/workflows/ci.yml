@@ -44,6 +44,7 @@ jobs:
           echo "CGO_CFLAGS=-IC:/vcpkg/installed/x64-windows/include/libusb-1.0" >> $env:GITHUB_ENV
           echo "CGO_LDFLAGS=-LC:/vcpkg/installed/x64-windows/lib -lusb-1.0" >> $env:GITHUB_ENV
           echo "PKG_CONFIG_PATH=C:/vcpkg/installed/x64-windows/lib/pkgconfig" >> $env:GITHUB_ENV
+          echo "C:/vcpkg/installed/x64-windows/bin" >> $env:GITHUB_PATH
         shell: pwsh
 
       - name: Build
