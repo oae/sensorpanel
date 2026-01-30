@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.21', '1.22']
+        go: ['1.21', '1.22', '1.23']
 
     steps:
       - uses: actions/checkout@v4
@@ -31,11 +31,56 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: brew install libusb pkg-config
 
+      - name: Install libusb (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          vcpkg integrate install
+          vcpkg install libusb:x64-windows
+        shell: cmd
+
+      - name: Set Windows environment
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "CGO_CFLAGS=-IC:/vcpkg/installed/x64-windows/include/libusb-1.0" >> $env:GITHUB_ENV
+          echo "CGO_LDFLAGS=-LC:/vcpkg/installed/x64-windows/lib -lusb-1.0" >> $env:GITHUB_ENV
+          echo "PKG_CONFIG_PATH=C:/vcpkg/installed/x64-windows/lib/pkgconfig" >> $env:GITHUB_ENV
+        shell: pwsh
+
       - name: Build
         run: go build -v ./...
 
       - name: Test
         run: go test -v ./...
+
+      - name: Test with race detector (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./...
+
+  test-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install libusb
+        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
+
+      - name: Run tests with coverage
+        run: go test -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Display coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+          verbose: true
 
   lint:
     runs-on: ubuntu-latest
