@@ -12,6 +12,7 @@ html, body, #root {
 
 body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-weight: 500;
   background: linear-gradient(135deg, #1a1a3e 0%, #2d1b4e 30%, #1e3a5f 60%, #0d4d4d 100%);
   color: white;
 }
@@ -255,7 +256,7 @@ body {
 /* DIMM Layout - represents physical motherboard slots */
 .dimm-layout {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   justify-content: center;
   flex: 1;
   align-items: center;
@@ -269,13 +270,13 @@ body {
 }
 
 .dimm-temp-circle {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: bold;
 }
 
@@ -292,8 +293,9 @@ body {
 }
 
 .dimm-slot-label {
-  font-size: 8px;
-  color: #888;
+  font-size: 9px;
+  color: #aaa;
+  font-weight: 600;
 }
 
 .memory-stats {
@@ -302,8 +304,8 @@ body {
 
 /* Temperature Rings */
 .temp-ring {
-  width: 55px;
-  height: 55px;
+  width: 70px;
+  height: 70px;
   position: relative;
   flex-shrink: 0;
 }
@@ -317,12 +319,12 @@ body {
 .ring-bg {
   fill: none;
   stroke: rgba(100, 100, 100, 0.3);
-  stroke-width: 6;
+  stroke-width: 7;
 }
 
 .ring-value {
   fill: none;
-  stroke-width: 6;
+  stroke-width: 7;
   stroke-linecap: round;
   transition: stroke-dasharray 0.3s ease;
 }
@@ -340,7 +342,7 @@ body {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: bold;
 }
 
