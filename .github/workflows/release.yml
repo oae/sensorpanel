@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          release-type: go
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-release:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            suffix: ""
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            suffix: ""
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            suffix: ""
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            suffix: ""
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            suffix: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install libusb (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libusb-1.0-0-dev
+          # For cross-compilation to arm64
+          if [ "${{ matrix.goarch }}" = "arm64" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+
+      - name: Install libusb (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install libusb pkg-config
+
+      - name: Install libusb (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          vcpkg integrate install
+          vcpkg install libusb:x64-windows
+        shell: cmd
+
+      - name: Set Windows environment
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "CGO_CFLAGS=-IC:/vcpkg/installed/x64-windows/include/libusb-1.0" >> $env:GITHUB_ENV
+          echo "CGO_LDFLAGS=-LC:/vcpkg/installed/x64-windows/lib -lusb-1.0" >> $env:GITHUB_ENV
+          echo "PKG_CONFIG_PATH=C:/vcpkg/installed/x64-windows/lib/pkgconfig" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.goarch }}" = "arm64" ]; then
+            export CC=aarch64-linux-gnu-gcc
+          fi
+          go build -ldflags="-s -w -X main.version=${{ needs.release-please.outputs.version }}" \
+            -o sensorpanel-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} .
+        shell: bash
+
+      - name: Create archive (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          tar -czvf sensorpanel-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz \
+            sensorpanel-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} \
+            README.md LICENSE
+
+      - name: Create archive (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          # Copy libusb DLL
+          cp C:/vcpkg/installed/x64-windows/bin/libusb-1.0.dll .
+          Compress-Archive -Path sensorpanel-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }},libusb-1.0.dll,README.md,LICENSE -DestinationPath sensorpanel-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+        shell: pwsh
+
+      - name: Upload release asset (Unix)
+        if: matrix.os != 'windows-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: sensorpanel-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+
+      - name: Upload release asset (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: sensorpanel-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+
+  checksums:
+    needs: [release-please, build-release]
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all release assets
+        uses: robinraju/release-downloader@v1
+        with:
+          tag: ${{ needs.release-please.outputs.tag_name }}
+          fileName: "*"
+          out-file-path: "assets"
+
+      - name: Generate checksums
+        run: |
+          cd assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload checksums
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: assets/SHA256SUMS.txt

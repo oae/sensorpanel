@@ -14,11 +14,13 @@ A cross-platform CLI tool for driving USB LCD displays as real-time system monit
 - **Multi-device support** - Modular device profiles for different USB displays
 - **Easy device contribution** - Interactive wizard to add support for new panels
 - **Real-time monitoring** - CPU, GPU (NVIDIA/AMD), RAM, disk, and network stats
+- **Dynamic sensor config** - Enable/disable sensors and configure options at runtime
 - **Web-based themes** - Create custom themes using React + TypeScript
-- **TypeScript SDK** - React hooks for easy theme development
+- **TypeScript SDK** - React hooks for easy theme development with hot reload
 - **Single-command dev** - One command starts everything for theme development
 - **Headless rendering** - Auto-downloads Chrome for Testing to render themes
 - **Cross-platform** - Works on Linux, macOS, and Windows
+- **Autostart service** - Install as system service on all platforms
 - **NixOS support** - Flake with module, udev rules, and systemd service
 
 ## Quick Start
@@ -50,10 +52,26 @@ nix build
 # With built-in renderer
 ./sensorpanel run
 
+# With sensor options
+./sensorpanel run --opt disk.mounts=/,/home --opt network.interface=eth*
+
 # Or create and use a custom theme
 ./sensorpanel theme create my-theme
 ./sensorpanel theme select my-theme
 ./sensorpanel run
+```
+
+### 4. (Optional) Install as autostart service
+
+```bash
+# Install to start on login
+./sensorpanel service install --opt disk.mounts=/
+
+# Start now
+./sensorpanel service start
+
+# Check status
+./sensorpanel service status
 ```
 
 ## Supported Devices
@@ -75,15 +93,30 @@ SensorPanel uses a modular device profile system. Currently supported:
 sensorpanel run [flags]
 
 Flags:
-  -i, --interval float   Update interval in seconds (default 1.0)
-  -b, --brightness int   Backlight brightness 0-7 (default 7)
-  -m, --mounts strings   Disk mount points to monitor (default [/])
-      --cpu              Show CPU stats (default true)
-      --gpu              Show GPU stats (default true)
-      --ram              Show RAM stats (default true)
-      --disk             Show disk stats (default true)
-      --network          Show network stats (default true)
+  -i, --interval float    Update interval in seconds (default 1.0)
+  -b, --brightness int    Backlight brightness 0-7 (default 7)
+  -s, --sensors strings   Sensors to enable (e.g., cpu,memory,disk). Default: all
+  -x, --exclude strings   Sensors to exclude (e.g., network,nvidia_gpu)
+  -o, --opt strings       Sensor options (e.g., disk.mounts=/,/home)
 ```
+
+### Sensor Options
+
+Configure sensor behavior with `--opt` flags or in config.json:
+
+```bash
+# Show available sensor options
+sensorpanel sensor opts
+
+# Examples
+sensorpanel run --opt disk.mounts=/,/home --opt network.interface=eth*
+```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `disk.mounts` | `[]string` | Disk mount points to monitor |
+| `network.interface` | `string` | Network interface filter (supports `*` wildcard) |
+| `nvidia_gpu.smi_path` | `string` | Custom path to nvidia-smi binary |
 
 ### Device Management
 
@@ -101,11 +134,12 @@ sensorpanel device reset     # Reset to defaults
 sensorpanel theme list              # List installed themes
 sensorpanel theme create <name>     # Create from React+TypeScript template
 sensorpanel theme select <name>     # Set active theme
-sensorpanel theme dev [name]        # Start dev server (auto-detects package manager)
+sensorpanel theme dev [name]        # Start dev server with hot reload
 sensorpanel theme build [name]      # Build theme for production
 sensorpanel theme preview [name]    # Open in browser
 sensorpanel theme delete <name>     # Remove theme
 sensorpanel theme path              # Show themes directory
+sensorpanel theme sdk update [name] # Update SDK in existing theme
 sensorpanel theme browser install   # Download Chrome for Testing
 sensorpanel theme browser status    # Check browser availability
 sensorpanel theme browser remove    # Remove cached browser
@@ -126,10 +160,29 @@ sensorpanel panel brightness 5 # Set brightness (0-7)
 ```bash
 sensorpanel sensor list              # List all registered sensors
 sensorpanel sensor list -a           # List only available sensors on this system
+sensorpanel sensor opts              # List available sensor options
 sensorpanel sensor types             # Generate TypeScript types for all sensors
 sensorpanel sensor types -o types.ts # Output to file
 sensorpanel sensor create            # Interactive wizard to create a new sensor
 ```
+
+### Service Management (Autostart)
+
+```bash
+sensorpanel service install          # Install as autostart service
+sensorpanel service install --opt disk.mounts=/  # With sensor options
+sensorpanel service uninstall        # Remove autostart service
+sensorpanel service start            # Start the service now
+sensorpanel service stop             # Stop the service
+sensorpanel service status           # Show service status
+sensorpanel service logs             # View service logs
+sensorpanel service logs -f          # Follow logs in real-time
+```
+
+Cross-platform support:
+- **Linux**: systemd user service (`~/.config/systemd/user/`)
+- **macOS**: launchd LaunchAgent (`~/Library/LaunchAgents/`)
+- **Windows**: Startup folder + Registry
 
 ### Other Commands
 
@@ -227,6 +280,9 @@ sensorpanel theme create my-theme
 # Start everything with one command:
 sensorpanel theme dev my-theme
 
+# With sensor options:
+sensorpanel theme dev my-theme --opt disk.mounts=/ --opt network.interface=eth*
+
 # This automatically:
 # - Detects your package manager (npm/yarn/pnpm/bun)
 # - Installs dependencies if needed
@@ -307,7 +363,10 @@ services.sensorpanel = {
   interval = 1.0;        # Update interval in seconds
   brightness = 7;        # Backlight brightness (0-7)
   theme = null;          # Theme name or null for built-in
-  diskMounts = [ "/" ];  # Mount points to monitor
+  sensorOptions = {      # Sensor-specific options
+    "disk.mounts" = [ "/" "/home" ];
+    "network.interface" = "eth*";
+  };
   user = "sensorpanel";  # Service user
   group = "sensorpanel"; # Service group (for USB access)
 };
