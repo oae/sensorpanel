@@ -24,3 +24,5 @@ Thumbs.db
 *.pcapng
 test_preview.png
 session-*.md
+MEMORY.md
+TODO.md
