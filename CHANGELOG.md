@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/oae/sensorpanel/compare/v1.0.0...v1.0.1) (2026-01-31)
+
+
+### Bug Fixes
+
+* **ci:** use native runners for cross-platform builds ([8df2e64](https://github.com/oae/sensorpanel/commit/8df2e6418efe92aa8fb58b9d9a804484ac6946c7))
+
 ## 1.0.0 (2026-01-31)
 
 
