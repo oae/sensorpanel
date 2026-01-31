@@ -1,7 +1,9 @@
-// Package config handles XDG-compliant configuration for sensorpanel.
+// Package config handles platform-specific configuration for sensorpanel.
 //
-// Configuration is stored in:
-//   - $XDG_CONFIG_HOME/sensorpanel/config.json (default: ~/.config/sensorpanel/config.json)
+// Configuration is stored in platform-specific locations:
+//   - Linux:   $XDG_CONFIG_HOME/sensorpanel/config.json (default: ~/.config/sensorpanel/)
+//   - macOS:   ~/Library/Application Support/sensorpanel/config.json
+//   - Windows: %APPDATA%\sensorpanel\config.json
 //
 // The config file stores:
 //   - Selected USB device (VID, PID, Serial)
@@ -14,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/alperen/sensorpanel/pkg/paths"
 )
 
 const (
@@ -68,24 +72,13 @@ func DefaultConfig() *Config {
 		// Device is intentionally empty - must be configured via 'device select'
 		Brightness:     7,
 		UpdateInterval: 1.0,
-		DiskMounts:     []string{"/"},
+		DiskMounts:     paths.DefaultDiskMounts(),
 	}
 }
 
-// configDir returns the XDG config directory for sensorpanel.
+// configDir returns the platform-specific config directory for sensorpanel.
 func configDir() (string, error) {
-	// Check XDG_CONFIG_HOME first
-	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
-		return filepath.Join(xdgConfig, appName), nil
-	}
-
-	// Fall back to ~/.config
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine home directory: %w", err)
-	}
-
-	return filepath.Join(home, ".config", appName), nil
+	return paths.ConfigDir()
 }
 
 // ConfigPath returns the full path to the config file.

@@ -108,7 +108,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Warning: failed to set brightness: %v\n", err)
 	}
 
-	// Configure sensors - use modular CollectorV2
+	// Configure sensors
 	sensorConfig := &sensors.Config{
 		ShowCPU:          runShowCPU,
 		ShowGPU:          runShowGPU,
@@ -119,7 +119,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		NetworkInterface: "*",
 		GPUMethod:        "auto",
 	}
-	collector := sensors.NewCollectorV2(sensorConfig)
+	collector := sensors.NewCollector(sensorConfig)
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -136,7 +136,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 }
 
 // runWithTheme runs the dashboard using a theme with headless browser rendering.
-func runWithTheme(dev *panel.Device, collector *sensors.CollectorV2, cfg *config.Config, themeName string, sigChan chan os.Signal) error {
+func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.Config, themeName string, sigChan chan os.Signal) error {
 	// Load the theme
 	t, err := theme.Load(themeName)
 	if err != nil {
@@ -230,7 +230,7 @@ func runWithTheme(dev *panel.Device, collector *sensors.CollectorV2, cfg *config
 }
 
 // runWithBuiltinRenderer runs the dashboard using the built-in bitmap renderer.
-func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.CollectorV2, sigChan chan os.Signal) error {
+func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.Collector, sigChan chan os.Signal) error {
 	// Configure renderer with device profile dimensions
 	renderConfig := &renderer.Config{
 		Width:  dev.Profile.Width(),
@@ -271,10 +271,9 @@ func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.CollectorV2, s
 	}
 }
 
-func renderFrame(dev *panel.Device, collector *sensors.CollectorV2, render *renderer.Renderer, frameCount *int) {
-	// Collect sensor data and convert to legacy format for renderer
-	collected := collector.CollectAll()
-	data := collector.ToLegacyData(collected)
+func renderFrame(dev *panel.Device, collector *sensors.Collector, render *renderer.Renderer, frameCount *int) {
+	// Collect sensor data
+	data := collector.CollectAll()
 
 	// Render to image
 	img := render.Render(data)
@@ -290,22 +289,18 @@ func renderFrame(dev *panel.Device, collector *sensors.CollectorV2, render *rend
 }
 
 // renderThemeFrame collects sensor data, broadcasts to theme, captures screenshot, and sends to display.
-func renderThemeFrame(dev *panel.Device, collector *sensors.CollectorV2, srv *server.Server, browserRenderer *browser.Renderer, frameCount *int) error {
-	// Collect sensor data and convert to legacy format
-	collected := collector.CollectAll()
-	data := collector.ToLegacyData(collected)
-
-	// Convert to JSON-friendly format for the theme
-	jsonData := sensorDataToJSON(data)
+func renderThemeFrame(dev *panel.Device, collector *sensors.Collector, srv *server.Server, browserRenderer *browser.Renderer, frameCount *int) error {
+	// Collect sensor data
+	data := collector.CollectAll()
 
 	// Broadcast sensor data to theme via WebSocket
-	if err := srv.BroadcastSensorData(jsonData); err != nil {
+	if err := srv.BroadcastSensorData(data); err != nil {
 		// Non-fatal: theme might not have connected yet
 		_ = err
 	}
 
 	// Also inject via postMessage for themes that use that method
-	jsonBytes, err := json.Marshal(jsonData)
+	jsonBytes, err := json.Marshal(data)
 	if err == nil {
 		_ = browserRenderer.SendSensorData(string(jsonBytes))
 	}
@@ -330,100 +325,6 @@ func renderThemeFrame(dev *panel.Device, collector *sensors.CollectorV2, srv *se
 
 	*frameCount++
 	return nil
-}
-
-// SensorDataJSON is the JSON format sent to themes via WebSocket.
-type SensorDataJSON struct {
-	CPU      CPUDataJSON       `json:"cpu"`
-	GPU      GPUDataJSON       `json:"gpu"`
-	Memory   MemoryDataJSON    `json:"memory"`
-	Disks    []DiskDataJSON    `json:"disks"`
-	Networks []NetworkDataJSON `json:"networks"`
-}
-
-type CPUDataJSON struct {
-	LoadPercent  float64  `json:"load_percent"`
-	Temperature  *float64 `json:"temperature,omitempty"`
-	FrequencyMHz *float64 `json:"frequency_mhz,omitempty"`
-	CoreCount    int      `json:"core_count"`
-}
-
-type GPUDataJSON struct {
-	Available     bool     `json:"available"`
-	Name          string   `json:"name,omitempty"`
-	LoadPercent   *float64 `json:"load_percent,omitempty"`
-	Temperature   *float64 `json:"temperature,omitempty"`
-	MemoryUsedMB  *float64 `json:"memory_used_mb,omitempty"`
-	MemoryTotalMB *float64 `json:"memory_total_mb,omitempty"`
-	PowerWatts    *float64 `json:"power_watts,omitempty"`
-}
-
-type MemoryDataJSON struct {
-	TotalMB     float64 `json:"total_mb"`
-	UsedMB      float64 `json:"used_mb"`
-	AvailableMB float64 `json:"available_mb"`
-	Percent     float64 `json:"percent"`
-}
-
-type DiskDataJSON struct {
-	MountPoint string  `json:"mount_point"`
-	TotalGB    float64 `json:"total_gb"`
-	UsedGB     float64 `json:"used_gb"`
-	FreeGB     float64 `json:"free_gb"`
-	Percent    float64 `json:"percent"`
-}
-
-type NetworkDataJSON struct {
-	Interface     string  `json:"interface"`
-	RxBytesPerSec float64 `json:"rx_bytes_per_sec"`
-	TxBytesPerSec float64 `json:"tx_bytes_per_sec"`
-}
-
-// sensorDataToJSON converts sensor data to the JSON format expected by themes.
-func sensorDataToJSON(data *sensors.Data) SensorDataJSON {
-	result := SensorDataJSON{
-		CPU: CPUDataJSON{
-			LoadPercent:  data.CPU.LoadPercent,
-			Temperature:  data.CPU.Temperature,
-			FrequencyMHz: data.CPU.FrequencyMHz,
-			CoreCount:    data.CPU.CoreCount,
-		},
-		GPU: GPUDataJSON{
-			Available:     data.GPU.Available,
-			Name:          data.GPU.Name,
-			LoadPercent:   data.GPU.LoadPercent,
-			Temperature:   data.GPU.Temperature,
-			MemoryUsedMB:  data.GPU.MemoryUsedMB,
-			MemoryTotalMB: data.GPU.MemoryTotalMB,
-			PowerWatts:    data.GPU.PowerWatts,
-		},
-		Memory: MemoryDataJSON{
-			TotalMB:     data.Memory.TotalMB,
-			UsedMB:      data.Memory.UsedMB,
-			AvailableMB: data.Memory.AvailableMB,
-			Percent:     data.Memory.Percent,
-		},
-	}
-
-	for _, disk := range data.Disks {
-		result.Disks = append(result.Disks, DiskDataJSON{
-			MountPoint: disk.MountPoint,
-			TotalGB:    disk.TotalGB,
-			UsedGB:     disk.UsedGB,
-			FreeGB:     disk.FreeGB,
-			Percent:    disk.Percent,
-		})
-	}
-
-	for _, net := range data.Networks {
-		result.Networks = append(result.Networks, NetworkDataJSON{
-			Interface:     net.Interface,
-			RxBytesPerSec: net.RxBytesPerSec,
-			TxBytesPerSec: net.TxBytesPerSec,
-		})
-	}
-
-	return result
 }
 
 // ensureBrowserAvailable checks if a browser is available and downloads one if needed.

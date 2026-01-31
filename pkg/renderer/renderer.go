@@ -9,8 +9,6 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-
-	"github.com/alperen/sensorpanel/pkg/sensors"
 )
 
 // Colors used in the dashboard
@@ -57,7 +55,8 @@ func New(config *Config) *Renderer {
 }
 
 // Render draws sensor data to an image.
-func (r *Renderer) Render(data *sensors.Data) *image.RGBA {
+// The data parameter is a map from sensor IDs to their collected data.
+func (r *Renderer) Render(data map[string]interface{}) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, r.config.Width, r.config.Height))
 
 	// Fill background
@@ -66,64 +65,80 @@ func (r *Renderer) Render(data *sensors.Data) *image.RGBA {
 	y := 10
 
 	// CPU Section
-	y = r.drawCPU(img, 10, y, data.CPU)
-	y += 15
+	if cpu, ok := data["cpu"].(map[string]interface{}); ok {
+		y = r.drawCPU(img, 10, y, cpu)
+		y += 15
+	}
 
-	// GPU Section
-	y = r.drawGPU(img, 10, y, data.GPU)
-	y += 15
+	// GPU Section (try nvidia first, then amd)
+	if gpu, ok := data["nvidia_gpu"].(map[string]interface{}); ok {
+		y = r.drawGPU(img, 10, y, gpu)
+		y += 15
+	} else if gpu, ok := data["amd_gpu"].(map[string]interface{}); ok {
+		y = r.drawGPU(img, 10, y, gpu)
+		y += 15
+	}
 
 	// RAM Section
-	y = r.drawRAM(img, 10, y, data.Memory)
-	y += 15
+	if mem, ok := data["memory"].(map[string]interface{}); ok {
+		y = r.drawRAM(img, 10, y, mem)
+		y += 15
+	}
 
 	// Disk Section
-	y = r.drawDisks(img, 10, y, data.Disks)
-	y += 15
+	if disk, ok := data["disk"].(map[string]interface{}); ok {
+		y = r.drawDisks(img, 10, y, disk)
+		y += 15
+	}
 
 	// Network Section
-	r.drawNetwork(img, 10, y, data.Networks)
+	if net, ok := data["network"].(map[string]interface{}); ok {
+		r.drawNetwork(img, 10, y, net)
+	}
 
 	return img
 }
 
 // drawCPU draws the CPU section.
-func (r *Renderer) drawCPU(img *image.RGBA, x, y int, cpu sensors.CPUStats) int {
+func (r *Renderer) drawCPU(img *image.RGBA, x, y int, cpu map[string]interface{}) int {
 	// Label
 	r.drawText(img, x, y, "CPU", ColorLabel)
 
 	// Temperature
 	tempStr := "--°C"
 	tempColor := ColorText
-	if cpu.Temperature != nil {
-		temp := *cpu.Temperature
+	if temp, ok := getFloat(cpu, "temperature"); ok {
 		tempStr = fmt.Sprintf("%.0f°C", temp)
 		tempColor = r.tempColor(temp)
 	}
 	r.drawText(img, x+40, y, tempStr, tempColor)
 
 	// Frequency
-	freqStr := ""
-	if cpu.FrequencyMHz != nil {
-		freqStr = fmt.Sprintf("%.0fMHz", *cpu.FrequencyMHz)
+	if freq, ok := getFloat(cpu, "frequency_mhz"); ok {
+		freqStr := fmt.Sprintf("%.0fMHz", freq)
+		r.drawText(img, x+100, y, freqStr, ColorLabel)
 	}
-	r.drawText(img, x+100, y, freqStr, ColorLabel)
 
 	y += 20
 
 	// Load bar
-	r.drawProgressBar(img, x, y, r.config.Width-20, 25, cpu.LoadPercent, ColorCPU)
-	r.drawText(img, x+5, y+5, fmt.Sprintf("%.0f%%", cpu.LoadPercent), ColorText)
+	load := 0.0
+	if l, ok := getFloat(cpu, "load_percent"); ok {
+		load = l
+	}
+	r.drawProgressBar(img, x, y, r.config.Width-20, 25, load, ColorCPU)
+	r.drawText(img, x+5, y+5, fmt.Sprintf("%.0f%%", load), ColorText)
 
 	return y + 30
 }
 
 // drawGPU draws the GPU section.
-func (r *Renderer) drawGPU(img *image.RGBA, x, y int, gpu sensors.GPUStats) int {
+func (r *Renderer) drawGPU(img *image.RGBA, x, y int, gpu map[string]interface{}) int {
 	// Label
 	r.drawText(img, x, y, "GPU", ColorLabel)
 
-	if !gpu.Available {
+	available, _ := gpu["available"].(bool)
+	if !available {
 		r.drawText(img, x+40, y, "N/A", ColorLabel)
 		return y + 20
 	}
@@ -131,22 +146,23 @@ func (r *Renderer) drawGPU(img *image.RGBA, x, y int, gpu sensors.GPUStats) int 
 	// Temperature
 	tempStr := "--°C"
 	tempColor := ColorText
-	if gpu.Temperature != nil {
-		temp := *gpu.Temperature
+	if temp, ok := getFloat(gpu, "temperature"); ok {
 		tempStr = fmt.Sprintf("%.0f°C", temp)
 		tempColor = r.tempColor(temp)
 	}
 	r.drawText(img, x+40, y, tempStr, tempColor)
 
 	// Memory
-	if gpu.MemoryUsedMB != nil && gpu.MemoryTotalMB != nil {
-		memStr := fmt.Sprintf("%.0f/%.0fMB", *gpu.MemoryUsedMB, *gpu.MemoryTotalMB)
+	memUsed, hasUsed := getFloat(gpu, "memory_used_mb")
+	memTotal, hasTotal := getFloat(gpu, "memory_total_mb")
+	if hasUsed && hasTotal {
+		memStr := fmt.Sprintf("%.0f/%.0fMB", memUsed, memTotal)
 		r.drawText(img, x+100, y, memStr, ColorLabel)
 	}
 
 	// Power
-	if gpu.PowerWatts != nil {
-		powerStr := fmt.Sprintf("%.0fW", *gpu.PowerWatts)
+	if power, ok := getFloat(gpu, "power_watts"); ok {
+		powerStr := fmt.Sprintf("%.0fW", power)
 		r.drawText(img, x+220, y, powerStr, ColorLabel)
 	}
 
@@ -154,8 +170,8 @@ func (r *Renderer) drawGPU(img *image.RGBA, x, y int, gpu sensors.GPUStats) int 
 
 	// Load bar
 	load := 0.0
-	if gpu.LoadPercent != nil {
-		load = *gpu.LoadPercent
+	if l, ok := getFloat(gpu, "load_percent"); ok {
+		load = l
 	}
 	r.drawProgressBar(img, x, y, r.config.Width-20, 25, load, ColorGPU)
 	r.drawText(img, x+5, y+5, fmt.Sprintf("%.0f%%", load), ColorText)
@@ -164,35 +180,50 @@ func (r *Renderer) drawGPU(img *image.RGBA, x, y int, gpu sensors.GPUStats) int 
 }
 
 // drawRAM draws the RAM section.
-func (r *Renderer) drawRAM(img *image.RGBA, x, y int, mem sensors.MemoryStats) int {
+func (r *Renderer) drawRAM(img *image.RGBA, x, y int, mem map[string]interface{}) int {
+	usedMB, _ := getFloat(mem, "used_mb")
+	totalMB, _ := getFloat(mem, "total_mb")
+	percent, _ := getFloat(mem, "percent")
+
 	// Label with usage
-	label := fmt.Sprintf("RAM  %.1f/%.1fGB", mem.UsedMB/1024, mem.TotalMB/1024)
+	label := fmt.Sprintf("RAM  %.1f/%.1fGB", usedMB/1024, totalMB/1024)
 	r.drawText(img, x, y, label, ColorLabel)
 
 	y += 20
 
 	// Usage bar
-	r.drawProgressBar(img, x, y, r.config.Width-20, 25, mem.Percent, ColorRAM)
-	r.drawText(img, x+5, y+5, fmt.Sprintf("%.0f%%", mem.Percent), ColorText)
+	r.drawProgressBar(img, x, y, r.config.Width-20, 25, percent, ColorRAM)
+	r.drawText(img, x+5, y+5, fmt.Sprintf("%.0f%%", percent), ColorText)
 
 	return y + 30
 }
 
 // drawDisks draws the disk section.
-func (r *Renderer) drawDisks(img *image.RGBA, x, y int, disks []sensors.DiskStats) int {
-	if len(disks) == 0 {
+func (r *Renderer) drawDisks(img *image.RGBA, x, y int, diskData map[string]interface{}) int {
+	disks, ok := diskData["disks"].([]interface{})
+	if !ok || len(disks) == 0 {
 		r.drawText(img, x, y, "DISK  N/A", ColorLabel)
 		return y + 20
 	}
 
-	for _, disk := range disks {
-		label := fmt.Sprintf("%-6s %.0f/%.0fGB", disk.MountPoint, disk.UsedGB, disk.TotalGB)
+	for _, d := range disks {
+		disk, ok := d.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		mountPoint, _ := disk["mount_point"].(string)
+		usedGB, _ := getFloat(disk, "used_gb")
+		totalGB, _ := getFloat(disk, "total_gb")
+		percent, _ := getFloat(disk, "percent")
+
+		label := fmt.Sprintf("%-6s %.0f/%.0fGB", mountPoint, usedGB, totalGB)
 		r.drawText(img, x, y, label, ColorLabel)
 
 		y += 20
 
-		r.drawProgressBar(img, x, y, r.config.Width-20, 20, disk.Percent, ColorDisk)
-		r.drawText(img, x+5, y+3, fmt.Sprintf("%.0f%%", disk.Percent), ColorText)
+		r.drawProgressBar(img, x, y, r.config.Width-20, 20, percent, ColorDisk)
+		r.drawText(img, x+5, y+3, fmt.Sprintf("%.0f%%", percent), ColorText)
 
 		y += 25
 	}
@@ -201,24 +232,35 @@ func (r *Renderer) drawDisks(img *image.RGBA, x, y int, disks []sensors.DiskStat
 }
 
 // drawNetwork draws the network section.
-func (r *Renderer) drawNetwork(img *image.RGBA, x, y int, nets []sensors.NetworkStats) int {
+func (r *Renderer) drawNetwork(img *image.RGBA, x, y int, netData map[string]interface{}) int {
 	r.drawText(img, x, y, "NET", ColorLabel)
 	y += 20
 
-	if len(nets) == 0 {
+	interfaces, ok := netData["interfaces"].([]interface{})
+	if !ok || len(interfaces) == 0 {
 		r.drawText(img, x, y, "No active interfaces", ColorLabel)
 		return y + 20
 	}
 
-	for _, net := range nets {
-		// Only show interfaces with traffic
-		if net.RxBytesPerSec == 0 && net.TxBytesPerSec == 0 && net.RxTotalBytes == 0 {
+	for _, n := range interfaces {
+		net, ok := n.(map[string]interface{})
+		if !ok {
 			continue
 		}
 
-		rxStr := sensors.FormatBytesPerSec(net.RxBytesPerSec)
-		txStr := sensors.FormatBytesPerSec(net.TxBytesPerSec)
-		line := fmt.Sprintf("%-8s ↓%s ↑%s", net.Interface, rxStr, txStr)
+		iface, _ := net["interface"].(string)
+		rxBPS, _ := getFloat(net, "rx_bytes_per_sec")
+		txBPS, _ := getFloat(net, "tx_bytes_per_sec")
+		rxTotal, hasRxTotal := getFloat(net, "rx_total_bytes")
+
+		// Only show interfaces with traffic
+		if rxBPS == 0 && txBPS == 0 && (!hasRxTotal || rxTotal == 0) {
+			continue
+		}
+
+		rxStr := formatBytesPerSec(rxBPS)
+		txStr := formatBytesPerSec(txBPS)
+		line := fmt.Sprintf("%-8s ↓%s ↑%s", iface, rxStr, txStr)
 		r.drawText(img, x, y, line, ColorNetwork)
 		y += 18
 	}
@@ -291,6 +333,48 @@ func (r *Renderer) tempColor(temp float64) color.RGBA {
 		return ColorTempWarn
 	}
 	return ColorTempHot
+}
+
+// getFloat extracts a float64 from a map, handling both float64 and *float64.
+func getFloat(m map[string]interface{}, key string) (float64, bool) {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case *float64:
+		if val != nil {
+			return *val, true
+		}
+		return 0, false
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case uint64:
+		return float64(val), true
+	default:
+		return 0, false
+	}
+}
+
+// formatBytesPerSec formats bytes per second as a human-readable string.
+func formatBytesPerSec(bps float64) string {
+	return formatBytes(bps) + "/s"
+}
+
+// formatBytes formats a byte count as a human-readable string.
+func formatBytes(bytes float64) string {
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	for _, unit := range units {
+		if bytes < 1024 {
+			return fmt.Sprintf("%.1f%s", bytes, unit)
+		}
+		bytes /= 1024
+	}
+	return fmt.Sprintf("%.1fPB", bytes)
 }
 
 // font5x7 is a simple 5x7 bitmap font for ASCII characters 32-126.
