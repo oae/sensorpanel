@@ -47,8 +47,3 @@ func CacheDir() (string, error) {
 
 	return filepath.Join(dataDir, "cache"), nil
 }
-
-// DefaultDiskMounts returns the default disk mount points for Windows.
-func DefaultDiskMounts() []string {
-	return []string{"C:\\"}
-}

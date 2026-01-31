@@ -237,3 +237,35 @@ func (t *Theme) WalkDistFiles(fn func(path string, d fs.DirEntry) error) error {
 		return fn(path, d)
 	})
 }
+
+// UpdateSDK updates the sensorpanel SDK files in a theme to the latest version.
+func UpdateSDK(name string) error {
+	theme, err := Load(name)
+	if err != nil {
+		return err
+	}
+
+	// SDK files to update
+	sdkFiles := map[string]string{
+		"lib/sensorpanel/index.ts":  sdkIndexTS(),
+		"lib/sensorpanel/types.ts":  sdkTypesTS(),
+		"lib/sensorpanel/client.ts": sdkClientTS(),
+		"lib/sensorpanel/hooks.ts":  sdkHooksTS(),
+	}
+
+	// Ensure lib/sensorpanel directory exists
+	sdkDir := filepath.Join(theme.Path, "lib", "sensorpanel")
+	if err := os.MkdirAll(sdkDir, 0755); err != nil {
+		return fmt.Errorf("failed to create SDK directory: %w", err)
+	}
+
+	// Write each SDK file
+	for relPath, content := range sdkFiles {
+		fullPath := filepath.Join(theme.Path, relPath)
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", relPath, err)
+		}
+	}
+
+	return nil
+}

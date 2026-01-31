@@ -309,3 +309,104 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestIsSensorEnabled(t *testing.T) {
+	tests := []struct {
+		name            string
+		enabledSensors  map[string]bool
+		disabledSensors []string
+		sensorID        string
+		want            bool
+	}{
+		{
+			name:            "nil EnabledSensors enables all",
+			enabledSensors:  nil,
+			disabledSensors: nil,
+			sensorID:        "cpu",
+			want:            true,
+		},
+		{
+			name:            "nil EnabledSensors enables unknown sensors",
+			enabledSensors:  nil,
+			disabledSensors: nil,
+			sensorID:        "custom_sensor",
+			want:            true,
+		},
+		{
+			name:            "empty map disables all",
+			enabledSensors:  map[string]bool{},
+			disabledSensors: nil,
+			sensorID:        "cpu",
+			want:            false,
+		},
+		{
+			name:            "explicit enable",
+			enabledSensors:  map[string]bool{"cpu": true, "memory": true},
+			disabledSensors: nil,
+			sensorID:        "cpu",
+			want:            true,
+		},
+		{
+			name:            "explicit disable in map",
+			enabledSensors:  map[string]bool{"cpu": false, "memory": true},
+			disabledSensors: nil,
+			sensorID:        "cpu",
+			want:            false,
+		},
+		{
+			name:            "not in map when map provided",
+			enabledSensors:  map[string]bool{"memory": true},
+			disabledSensors: nil,
+			sensorID:        "cpu",
+			want:            false,
+		},
+		{
+			name:            "DisabledSensors overrides nil EnabledSensors",
+			enabledSensors:  nil,
+			disabledSensors: []string{"cpu"},
+			sensorID:        "cpu",
+			want:            false,
+		},
+		{
+			name:            "DisabledSensors overrides enabled in map",
+			enabledSensors:  map[string]bool{"cpu": true, "memory": true},
+			disabledSensors: []string{"cpu"},
+			sensorID:        "cpu",
+			want:            false,
+		},
+		{
+			name:            "sensor not in DisabledSensors",
+			enabledSensors:  nil,
+			disabledSensors: []string{"network"},
+			sensorID:        "cpu",
+			want:            true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a collector with a fresh registry
+			reg := NewRegistry()
+			reg.Register(&mockProvider{
+				meta:      SensorMeta{ID: tt.sensorID, Category: "test"},
+				available: true,
+			})
+
+			config := &Config{
+				EnabledSensors:  tt.enabledSensors,
+				DisabledSensors: tt.disabledSensors,
+			}
+
+			c := &Collector{
+				registry: reg,
+				state:    NewCollectorState(),
+				config:   config,
+			}
+
+			got := c.isSensorEnabled(tt.sensorID)
+			if got != tt.want {
+				t.Errorf("isSensorEnabled(%q) = %v, want %v", tt.sensorID, got, tt.want)
+			}
+		})
+	}
+}

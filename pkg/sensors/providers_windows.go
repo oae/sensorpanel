@@ -74,6 +74,11 @@ type windowsDiskProvider struct {
 	mounts []string
 }
 
+// defaultDiskMounts returns the default disk mount points for Windows.
+func defaultDiskMounts() []string {
+	return []string{"C:\\"}
+}
+
 func (p *windowsDiskProvider) Meta() SensorMeta {
 	return SensorMeta{
 		ID:          "disk",
@@ -97,10 +102,30 @@ func (p *windowsDiskProvider) Available() bool {
 	return true // GetDiskFreeSpaceEx works on Windows
 }
 
+// Configure applies the given config to the provider.
+func (p *windowsDiskProvider) Configure(config *Config) {
+	if mounts, ok := config.GetStringSliceOption("disk.mounts"); ok {
+		p.mounts = mounts
+	}
+}
+
+// Options returns the configuration options for this provider.
+func (p *windowsDiskProvider) Options() []OptionDef {
+	return []OptionDef{
+		{
+			Key:         "disk.mounts",
+			Type:        "[]string",
+			Default:     "/ (Linux/macOS), C:\\ (Windows)",
+			Description: "Disk mount points to monitor",
+			Example:     "--opt disk.mounts=C:\\,D:\\",
+		},
+	}
+}
+
 func (p *windowsDiskProvider) Collect(state *CollectorState) map[string]interface{} {
 	mounts := p.mounts
 	if len(mounts) == 0 {
-		mounts = []string{"C:\\"}
+		mounts = defaultDiskMounts()
 	}
 
 	disks := make([]map[string]interface{}, 0, len(mounts))

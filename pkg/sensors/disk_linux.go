@@ -2,6 +2,11 @@
 
 package sensors
 
+// defaultDiskMounts returns the default disk mount points for Linux.
+func defaultDiskMounts() []string {
+	return []string{"/"}
+}
+
 func init() {
 	Register(&DiskProvider{})
 }
@@ -36,11 +41,31 @@ func (p *DiskProvider) Available() bool {
 	return true
 }
 
+// Configure applies the given config to the provider.
+func (p *DiskProvider) Configure(config *Config) {
+	if mounts, ok := config.GetStringSliceOption("disk.mounts"); ok {
+		p.mounts = mounts
+	}
+}
+
+// Options returns the configuration options for this provider.
+func (p *DiskProvider) Options() []OptionDef {
+	return []OptionDef{
+		{
+			Key:         "disk.mounts",
+			Type:        "[]string",
+			Default:     "/ (Linux/macOS), C:\\ (Windows)",
+			Description: "Disk mount points to monitor",
+			Example:     "--opt disk.mounts=/,/home,/data",
+		},
+	}
+}
+
 // Collect gathers disk sensor data.
 func (p *DiskProvider) Collect(state *CollectorState) map[string]interface{} {
 	mounts := p.mounts
 	if len(mounts) == 0 {
-		mounts = []string{"/"}
+		mounts = defaultDiskMounts()
 	}
 
 	disks := make([]map[string]interface{}, 0, len(mounts))
@@ -78,14 +103,4 @@ func (p *DiskProvider) Collect(state *CollectorState) map[string]interface{} {
 	return map[string]interface{}{
 		"_items": disks,
 	}
-}
-
-// SetMounts sets the mount points to monitor.
-func (p *DiskProvider) SetMounts(mounts []string) {
-	p.mounts = mounts
-}
-
-// NewDiskProvider creates a disk provider with specific mount points.
-func NewDiskProvider(mounts []string) *DiskProvider {
-	return &DiskProvider{mounts: mounts}
 }

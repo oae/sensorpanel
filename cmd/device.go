@@ -221,7 +221,7 @@ var deviceInfoCmd = &cobra.Command{
 		fmt.Println("=== Other Settings ===")
 		fmt.Printf("Brightness:   %d\n", cfg.Brightness)
 		fmt.Printf("Interval:     %.1fs\n", cfg.UpdateInterval)
-		fmt.Printf("Disk Mounts:  %v\n", cfg.DiskMounts)
+		fmt.Printf("Sensor Opts:  %v\n", cfg.SensorOptions)
 
 		// Check if configured device is connected
 		fmt.Println()

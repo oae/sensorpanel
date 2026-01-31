@@ -39,6 +39,15 @@ type SensorMeta struct {
 	ArrayKey    string     // For arrays, the field to use as map key in TypeScript
 }
 
+// OptionDef describes a configuration option for a sensor provider.
+type OptionDef struct {
+	Key         string // Option key (e.g., "disk.mounts")
+	Type        string // Type description: "string", "[]string"
+	Default     string // Default value description
+	Description string // Human-readable description
+	Example     string // Example CLI usage
+}
+
 // Provider is the interface that all sensor providers must implement.
 type Provider interface {
 	// Meta returns the sensor's metadata for registration and type generation.
@@ -50,6 +59,18 @@ type Provider interface {
 
 	// Available returns true if this sensor can collect data on the current system.
 	Available() bool
+}
+
+// Configurable is an optional interface for providers that need configuration.
+type Configurable interface {
+	// Configure applies the given config to the provider.
+	Configure(config *Config)
+}
+
+// OptionProvider is an optional interface for providers that have configurable options.
+type OptionProvider interface {
+	// Options returns the list of configuration options this provider supports.
+	Options() []OptionDef
 }
 
 // CollectorState holds shared state for sensor collection (e.g., previous readings for deltas).
@@ -188,6 +209,22 @@ func (r *Registry) Categories() map[string][]string {
 	return result
 }
 
+// AllOptions returns all configuration options from all registered providers.
+func (r *Registry) AllOptions() []OptionDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []OptionDef
+	for _, id := range r.order {
+		if p, ok := r.providers[id]; ok {
+			if op, ok := p.(OptionProvider); ok {
+				result = append(result, op.Options()...)
+			}
+		}
+	}
+	return result
+}
+
 // Register adds a provider to the global registry.
 func Register(p Provider) {
 	GlobalRegistry().Register(p)
@@ -205,11 +242,21 @@ func NewCollector(config *Config) *Collector {
 	if config == nil {
 		config = DefaultConfig()
 	}
-	return &Collector{
+
+	c := &Collector{
 		registry: GlobalRegistry(),
 		state:    NewCollectorState(),
 		config:   config,
 	}
+
+	// Configure providers that implement Configurable
+	for _, p := range c.registry.All() {
+		if configurable, ok := p.(Configurable); ok {
+			configurable.Configure(config)
+		}
+	}
+
+	return c
 }
 
 // CollectAll gathers data from all available sensors.
@@ -244,22 +291,26 @@ func (c *Collector) CollectByID(id string) (map[string]interface{}, bool) {
 
 // isSensorEnabled checks if a sensor is enabled in config.
 func (c *Collector) isSensorEnabled(id string) bool {
-	// Map legacy config flags to sensor IDs
-	switch id {
-	case "cpu":
-		return c.config.ShowCPU
-	case "memory":
-		return c.config.ShowRAM
-	case "nvidia_gpu", "amd_gpu":
-		return c.config.ShowGPU
-	case "disk":
-		return c.config.ShowDisk
-	case "network":
-		return c.config.ShowNetwork
-	default:
-		// New sensors are enabled by default
+	// Check if sensor is explicitly disabled
+	for _, disabled := range c.config.DisabledSensors {
+		if disabled == id {
+			return false
+		}
+	}
+
+	// If EnabledSensors is nil, all sensors are enabled by default
+	if c.config.EnabledSensors == nil {
 		return true
 	}
+
+	// Check if sensor is in the enabled map
+	enabled, exists := c.config.EnabledSensors[id]
+	if exists {
+		return enabled
+	}
+
+	// Sensor not in map - disabled by default when map is provided
+	return false
 }
 
 // GenerateTypeScriptTypes generates TypeScript interface definitions from registered sensors.

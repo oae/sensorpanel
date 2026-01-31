@@ -15,17 +15,17 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/alperen/sensorpanel/pkg/paths"
 	"github.com/alperen/sensorpanel/pkg/sensors"
 )
 
 // DevServer orchestrates the theme development experience.
 type DevServer struct {
-	ThemeDir  string
-	WSPort    int // WebSocket sensor server port (default 19847)
-	VitePort  int // Vite dev server port (default 15173)
-	NoBrowser bool
-	Interval  float64 // Sensor update interval in seconds
+	ThemeDir      string
+	WSPort        int // WebSocket sensor server port (default 19847)
+	VitePort      int // Vite dev server port (default 15173)
+	NoBrowser     bool
+	Interval      float64                // Sensor update interval in seconds
+	SensorOptions map[string]interface{} // Sensor provider options
 
 	// Internal state
 	wsServer    *http.Server
@@ -251,14 +251,9 @@ func (d *DevServer) prefixOutput(r io.Reader, prefix string) {
 // startSensorCollection starts collecting sensor data.
 func (d *DevServer) startSensorCollection() {
 	config := &sensors.Config{
-		ShowCPU:          true,
-		ShowGPU:          true,
-		ShowRAM:          true,
-		ShowDisk:         true,
-		ShowNetwork:      true,
-		DiskMounts:       paths.DefaultDiskMounts(),
-		NetworkInterface: "*",
-		GPUMethod:        "auto",
+		EnabledSensors:  nil, // All sensors enabled
+		DisabledSensors: nil,
+		Options:         d.SensorOptions,
 	}
 	d.collector = sensors.NewCollector(config)
 

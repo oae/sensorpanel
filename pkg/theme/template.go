@@ -505,33 +505,41 @@ type StatusListener = (status: ConnectionStatus) => void;
 // Transform raw JSON data from the server to our SensorData format
 function transformData(raw: Record<string, unknown>): SensorData {
   const cpu = raw.cpu as Record<string, unknown> | undefined;
-  const gpu = raw.gpu as Record<string, unknown> | undefined;
   const memory = raw.memory as Record<string, unknown> | undefined;
-  const disks = raw.disks as Array<Record<string, unknown>> | undefined;
-  const networks = raw.networks as Array<Record<string, unknown>> | undefined;
+  const disk = raw.disk as Record<string, unknown> | undefined;
+  const network = raw.network as Record<string, unknown> | undefined;
+  
+  // GPU: prefer nvidia_gpu, fall back to amd_gpu
+  const nvidiaGpu = raw.nvidia_gpu as Record<string, unknown> | undefined;
+  const amdGpu = raw.amd_gpu as Record<string, unknown> | undefined;
+  const gpu = nvidiaGpu ?? amdGpu;
 
+  // Disk: extract _items array
+  const diskItems = disk?._items as Array<Record<string, unknown>> | undefined;
   const diskMap: Record<string, SensorData["disk"][string]> = {};
-  if (disks) {
-    for (const d of disks) {
-      const mp = String(d.mount_point ?? "/");
+  if (diskItems) {
+    for (const d of diskItems) {
+      const mp = String(d.mount ?? "/");
       diskMap[mp] = {
         mountpoint: mp,
-        used: Number(d.used_gb ?? 0),
-        total: Number(d.total_gb ?? 0),
-        free: Number(d.free_gb ?? 0),
+        used: Number(d.used ?? 0),
+        total: Number(d.total ?? 0),
+        free: Number(d.free ?? 0),
         percent: Number(d.percent ?? 0),
       };
     }
   }
 
+  // Network: extract _items array
+  const networkItems = network?._items as Array<Record<string, unknown>> | undefined;
   const networkMap: Record<string, SensorData["network"][string]> = {};
-  if (networks) {
-    for (const n of networks) {
+  if (networkItems) {
+    for (const n of networkItems) {
       const iface = String(n.interface ?? "unknown");
       networkMap[iface] = {
         interface: iface,
-        rxRate: Number(n.rx_bytes_per_sec ?? 0),
-        txRate: Number(n.tx_bytes_per_sec ?? 0),
+        rxRate: Number(n.rx_rate ?? 0),
+        txRate: Number(n.tx_rate ?? 0),
       };
     }
   }
@@ -539,23 +547,23 @@ function transformData(raw: Record<string, unknown>): SensorData {
   return {
     cpu: {
       temperature: cpu?.temperature as number | undefined,
-      load: Number(cpu?.load_percent ?? 0),
-      frequency: cpu?.frequency_mhz as number | undefined,
-      cores: cpu?.core_count as number | undefined,
+      load: Number(cpu?.load ?? 0),
+      frequency: cpu?.frequency as number | undefined,
+      cores: cpu?.cores as number | undefined,
     },
     gpu: {
-      available: Boolean(gpu?.available),
+      available: Boolean(gpu),
       name: gpu?.name as string | undefined,
       temperature: gpu?.temperature as number | undefined,
-      load: gpu?.load_percent as number | undefined,
-      memoryUsed: gpu?.memory_used_mb as number | undefined,
-      memoryTotal: gpu?.memory_total_mb as number | undefined,
-      power: gpu?.power_watts as number | undefined,
+      load: gpu?.load as number | undefined,
+      memoryUsed: gpu?.memory_used as number | undefined,
+      memoryTotal: gpu?.memory_total as number | undefined,
+      power: gpu?.power as number | undefined,
     },
     memory: {
-      used: Number(memory?.used_mb ?? 0),
-      total: Number(memory?.total_mb ?? 0),
-      available: Number(memory?.available_mb ?? 0),
+      used: Number(memory?.used ?? 0),
+      total: Number(memory?.total ?? 0),
+      available: Number(memory?.available ?? 0),
       percent: Number(memory?.percent ?? 0),
     },
     disk: diskMap,
@@ -571,8 +579,33 @@ class SensorPanelClient {
   private status: ConnectionStatus = "disconnected";
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private currentPortIndex = 0;
+  private postMessageBound = false;
+
+  constructor() {
+    // Listen for postMessage events (used in headless browser mode)
+    this.setupPostMessageListener();
+  }
+
+  private setupPostMessageListener(): void {
+    if (this.postMessageBound) return;
+    this.postMessageBound = true;
+
+    window.addEventListener("message", (event: MessageEvent) => {
+      if (event.data?.type === "sensorData") {
+        const raw = event.data.data as Record<string, unknown>;
+        const data = transformData(raw);
+        this.dataListeners.forEach((fn) => fn(data));
+        // If we receive postMessage data, we're connected via postMessage
+        if (this.status !== "connected") {
+          this.setStatus("connected");
+        }
+      }
+    });
+  }
 
   async connect(): Promise<void> {
+    this.setStatus("connecting");
+
     // Check for ?ws=PORT query param first
     const params = new URLSearchParams(window.location.search);
     const wsPortParam = params.get("ws");
@@ -589,10 +622,8 @@ class SensorPanelClient {
       }
     }
 
-    this.setStatus("connecting");
-
     for (let i = 0; i < DEFAULT_PORTS.length; i++) {
-      const port = DEFAULT_PORTS[(this.currentPortIndex + i) % DEFAULT_PORTS.length];
+      const port = DEFAULT_PORTS[(this.currentPortIndex + i) % DEFAULT_PORTS.length]!;
       try {
         await this.tryConnect(port);
         this.currentPortIndex = DEFAULT_PORTS.indexOf(port);

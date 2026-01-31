@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -217,6 +218,7 @@ var themePathCmd = &cobra.Command{
 var (
 	themeDevNoBrowser bool
 	themeDevInterval  float64
+	themeDevOpts      []string
 )
 
 var themeDevCmd = &cobra.Command{
@@ -259,9 +261,28 @@ Press Ctrl+C to stop all servers.`,
 		fmt.Printf("Starting development server for theme: %s\n", themeName)
 		fmt.Printf("Theme path: %s\n\n", t.Path)
 
+		// Parse sensor options from --opt flags
+		var sensorOptions map[string]interface{}
+		if len(themeDevOpts) > 0 {
+			sensorOptions = make(map[string]interface{})
+			for _, opt := range themeDevOpts {
+				key, value, ok := strings.Cut(opt, "=")
+				if !ok {
+					return fmt.Errorf("invalid option format %q (expected key=value)", opt)
+				}
+				// If value contains commas, treat it as a string slice
+				if strings.Contains(value, ",") {
+					sensorOptions[key] = strings.Split(value, ",")
+				} else {
+					sensorOptions[key] = value
+				}
+			}
+		}
+
 		// Create dev server
 		devServer := theme.NewDevServer(t.Path)
 		devServer.NoBrowser = themeDevNoBrowser
+		devServer.SensorOptions = sensorOptions
 		if themeDevInterval > 0 {
 			devServer.Interval = themeDevInterval
 		}
@@ -427,6 +448,64 @@ var themeBrowserRemoveCmd = &cobra.Command{
 	},
 }
 
+var themeSDKCmd = &cobra.Command{
+	Use:   "sdk",
+	Short: "Manage theme SDK",
+}
+
+var themeSDKUpdateCmd = &cobra.Command{
+	Use:   "update [name]",
+	Short: "Update theme SDK to latest version",
+	Long: `Update the sensorpanel SDK files in a theme to the latest version.
+
+This updates the lib/sensorpanel/ directory with the latest SDK files
+from sensorpanel. Use this after upgrading sensorpanel to get bug fixes
+and new features in themes.
+
+If no name is provided, updates the currently selected theme.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var themeName string
+		if len(args) > 0 {
+			themeName = args[0]
+		} else {
+			themeName, _ = config.GetTheme()
+		}
+
+		if themeName == "" {
+			return fmt.Errorf("no theme specified and no theme selected in config\nUse: sensorpanel theme sdk update <name>")
+		}
+
+		// Verify theme exists
+		t, err := theme.Load(themeName)
+		if err != nil {
+			if err == theme.ErrThemeNotFound {
+				return fmt.Errorf("theme '%s' not found (use 'theme list' to see available themes)", themeName)
+			}
+			return err
+		}
+
+		fmt.Printf("Updating SDK for theme: %s\n", themeName)
+		fmt.Printf("Theme path: %s\n\n", t.Path)
+
+		if err := theme.UpdateSDK(themeName); err != nil {
+			return fmt.Errorf("failed to update SDK: %w", err)
+		}
+
+		fmt.Println("SDK updated successfully!")
+		fmt.Println()
+		fmt.Println("Files updated:")
+		fmt.Println("  lib/sensorpanel/index.ts")
+		fmt.Println("  lib/sensorpanel/types.ts")
+		fmt.Println("  lib/sensorpanel/client.ts")
+		fmt.Println("  lib/sensorpanel/hooks.ts")
+		fmt.Println()
+		fmt.Printf("Run 'sensorpanel theme build %s' to rebuild the theme.\n", themeName)
+
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(themeCmd)
 
@@ -439,14 +518,18 @@ func init() {
 	themeCmd.AddCommand(themeDevCmd)
 	themeCmd.AddCommand(themeBuildCmd)
 	themeCmd.AddCommand(themeBrowserCmd)
+	themeCmd.AddCommand(themeSDKCmd)
 
 	// Flags for theme dev
 	themeDevCmd.Flags().BoolVar(&themeDevNoBrowser, "no-browser", false, "Don't open browser automatically")
 	themeDevCmd.Flags().Float64VarP(&themeDevInterval, "interval", "i", 1.0, "Sensor update interval in seconds")
+	themeDevCmd.Flags().StringSliceVarP(&themeDevOpts, "opt", "o", nil, "Sensor options in key=value format (e.g., disk.mounts=/,/home)")
 
 	themeBrowserCmd.AddCommand(themeBrowserInstallCmd)
 	themeBrowserCmd.AddCommand(themeBrowserStatusCmd)
 	themeBrowserCmd.AddCommand(themeBrowserRemoveCmd)
+
+	themeSDKCmd.AddCommand(themeSDKUpdateCmd)
 }
 
 // openBrowser opens a URL in the default browser.

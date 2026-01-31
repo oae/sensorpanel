@@ -43,11 +43,20 @@ to add the implementation for.`,
 	RunE: runSensorCreate,
 }
 
+var sensorOptsCmd = &cobra.Command{
+	Use:   "opts",
+	Short: "List available sensor options",
+	Long: `List all available sensor options that can be passed via --opt flag
+or configured in the config file.`,
+	RunE: runSensorOpts,
+}
+
 func init() {
 	rootCmd.AddCommand(sensorCmd)
 	sensorCmd.AddCommand(sensorListCmd)
 	sensorCmd.AddCommand(sensorTypesCmd)
 	sensorCmd.AddCommand(sensorCreateCmd)
+	sensorCmd.AddCommand(sensorOptsCmd)
 
 	sensorListCmd.Flags().BoolP("available", "a", false, "Only show available sensors on this system")
 	sensorTypesCmd.Flags().StringP("output", "o", "", "Output file path (default: stdout)")
@@ -478,4 +487,81 @@ func sensorToCamelCase(s string) string {
 	}
 
 	return result
+}
+
+func runSensorOpts(cmd *cobra.Command, args []string) error {
+	registry := sensors.GlobalRegistry()
+	options := registry.AllOptions()
+
+	if len(options) == 0 {
+		fmt.Println("No sensor options available.")
+		return nil
+	}
+
+	fmt.Println("Available sensor options:")
+	fmt.Println()
+	fmt.Println("These options can be passed via --opt flag or set in config.json")
+	fmt.Println("under the \"sensor_options\" key.")
+	fmt.Println()
+
+	// Deduplicate options by key (same option may be registered by multiple platform providers)
+	seen := make(map[string]bool)
+	for _, opt := range options {
+		if seen[opt.Key] {
+			continue
+		}
+		seen[opt.Key] = true
+
+		fmt.Printf("  %s\n", opt.Key)
+		fmt.Printf("    %s\n", opt.Description)
+		fmt.Printf("    Type:    %s\n", opt.Type)
+		fmt.Printf("    Default: %s\n", opt.Default)
+		fmt.Printf("    CLI:     %s\n", opt.Example)
+		fmt.Println()
+	}
+
+	fmt.Println("Example config.json:")
+	fmt.Println("  {")
+	fmt.Println("    \"sensor_options\": {")
+
+	// Print example for each unique option
+	seen = make(map[string]bool)
+	count := 0
+	for _, opt := range options {
+		if seen[opt.Key] {
+			continue
+		}
+		seen[opt.Key] = true
+		count++
+	}
+
+	seen = make(map[string]bool)
+	idx := 0
+	for _, opt := range options {
+		if seen[opt.Key] {
+			continue
+		}
+		seen[opt.Key] = true
+		idx++
+
+		// Generate example value based on type
+		var exampleValue string
+		switch opt.Type {
+		case "[]string":
+			exampleValue = "[\"/\", \"/home\"]"
+		default:
+			exampleValue = "\"value\""
+		}
+
+		comma := ","
+		if idx == count {
+			comma = ""
+		}
+		fmt.Printf("      \"%s\": %s%s\n", opt.Key, exampleValue, comma)
+	}
+
+	fmt.Println("    }")
+	fmt.Println("  }")
+
+	return nil
 }

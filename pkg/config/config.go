@@ -61,8 +61,8 @@ type Config struct {
 	Theme string `json:"theme,omitempty"` // Active theme name (empty = use built-in renderer)
 
 	// Sensor settings
-	UpdateInterval float64  `json:"update_interval,omitempty"` // seconds
-	DiskMounts     []string `json:"disk_mounts,omitempty"`
+	UpdateInterval float64                `json:"update_interval,omitempty"` // seconds
+	SensorOptions  map[string]interface{} `json:"sensor_options,omitempty"`  // Provider-specific options (e.g., "disk.mounts": ["/", "/home"])
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -72,7 +72,7 @@ func DefaultConfig() *Config {
 		// Device is intentionally empty - must be configured via 'device select'
 		Brightness:     7,
 		UpdateInterval: 1.0,
-		DiskMounts:     paths.DefaultDiskMounts(),
+		SensorOptions:  nil, // Let sensor providers use their defaults
 	}
 }
 

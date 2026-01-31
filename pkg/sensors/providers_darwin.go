@@ -74,6 +74,11 @@ type darwinDiskProvider struct {
 	mounts []string
 }
 
+// defaultDiskMounts returns the default disk mount points for macOS.
+func defaultDiskMounts() []string {
+	return []string{"/"}
+}
+
 func (p *darwinDiskProvider) Meta() SensorMeta {
 	return SensorMeta{
 		ID:          "disk",
@@ -97,10 +102,30 @@ func (p *darwinDiskProvider) Available() bool {
 	return true // statfs works on macOS
 }
 
+// Configure applies the given config to the provider.
+func (p *darwinDiskProvider) Configure(config *Config) {
+	if mounts, ok := config.GetStringSliceOption("disk.mounts"); ok {
+		p.mounts = mounts
+	}
+}
+
+// Options returns the configuration options for this provider.
+func (p *darwinDiskProvider) Options() []OptionDef {
+	return []OptionDef{
+		{
+			Key:         "disk.mounts",
+			Type:        "[]string",
+			Default:     "/ (Linux/macOS), C:\\ (Windows)",
+			Description: "Disk mount points to monitor",
+			Example:     "--opt disk.mounts=/,/home,/data",
+		},
+	}
+}
+
 func (p *darwinDiskProvider) Collect(state *CollectorState) map[string]interface{} {
 	mounts := p.mounts
 	if len(mounts) == 0 {
-		mounts = []string{"/"}
+		mounts = defaultDiskMounts()
 	}
 
 	disks := make([]map[string]interface{}, 0, len(mounts))
