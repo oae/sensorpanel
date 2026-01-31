@@ -1,8 +1,7 @@
 # SensorPanel
 
-[![CI](https://github.com/alperen/sensorpanel/actions/workflows/ci.yml/badge.svg)](https://github.com/alperen/sensorpanel/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/alperen/sensorpanel/graph/badge.svg)](https://codecov.io/gh/alperen/sensorpanel)
-[![Go Report Card](https://goreportcard.com/badge/github.com/alperen/sensorpanel)](https://goreportcard.com/report/github.com/alperen/sensorpanel)
+[![CI](https://github.com/oae/sensorpanel/actions/workflows/ci.yml/badge.svg)](https://github.com/oae/sensorpanel/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/oae/sensorpanel)](https://goreportcard.com/report/github.com/oae/sensorpanel)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A cross-platform CLI tool for driving USB LCD displays as real-time system monitoring dashboards.
