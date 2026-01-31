@@ -1,17 +1,8 @@
 package device
 
 import (
-	"sync"
 	"testing"
 )
-
-// resetRegistry clears the registry for testing (not thread-safe, only for tests)
-func resetRegistry() {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	registry = nil
-	registryOnce = sync.Once{}
-}
 
 func TestRegister(t *testing.T) {
 	// Note: We can't easily reset the sync.Once, so these tests need to be careful

@@ -2,7 +2,6 @@ package device
 
 import (
 	"image"
-	"image/color"
 	"testing"
 )
 
@@ -145,15 +144,4 @@ func TestDeviceProfileInterface(t *testing.T) {
 	if info.ByteOrder != LittleEndian {
 		t.Errorf("GetInfo().ByteOrder = %v, want %v", info.ByteOrder, LittleEndian)
 	}
-}
-
-// Helper to create a test image
-func createTestImage(width, height int, c color.Color) *image.RGBA {
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			img.Set(x, y, c)
-		}
-	}
-	return img
 }
