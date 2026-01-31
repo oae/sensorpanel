@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/alperen/sensorpanel/pkg/service"
 	"github.com/spf13/cobra"
@@ -34,7 +35,17 @@ Use --opt to pass sensor options to the service.`,
 
 		fmt.Println("Service installed successfully!")
 		fmt.Println()
-		fmt.Println("The service will start automatically on next login.")
+		if runtime.GOOS == "linux" {
+			fmt.Println("The service will start automatically on login (via graphical-session.target).")
+			fmt.Println()
+			fmt.Println("Note: Some compositors (e.g., Hyprland) don't activate graphical-session.target.")
+			fmt.Println("If the service doesn't start on login, add to your compositor config:")
+			fmt.Println("  exec-once = systemctl --user start sensorpanel")
+			fmt.Println("  exec-shutdown = systemctl --user stop sensorpanel")
+		} else {
+			fmt.Println("The service will start automatically on next login.")
+		}
+		fmt.Println()
 		fmt.Println("To start it now, run: sensorpanel service start")
 		return nil
 	},

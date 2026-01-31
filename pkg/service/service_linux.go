@@ -51,6 +51,7 @@ func generateServiceFile(opts []string) (string, error) {
 
 	return fmt.Sprintf(`[Unit]
 Description=SensorPanel USB LCD Display
+PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
@@ -58,7 +59,6 @@ Type=simple
 ExecStart=%s
 Restart=on-failure
 RestartSec=5
-Environment=DISPLAY=:0
 
 [Install]
 WantedBy=graphical-session.target
@@ -76,13 +76,12 @@ func install(opts []string) error {
 		return fmt.Errorf("failed to create service directory: %w", err)
 	}
 
-	// Generate service file
+	// Generate and write service file
 	content, err := generateServiceFile(opts)
 	if err != nil {
 		return err
 	}
 
-	// Write service file
 	path, err := servicePath()
 	if err != nil {
 		return err
