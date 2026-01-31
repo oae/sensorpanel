@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.0](https://github.com/oae/sensorpanel/compare/v1.0.2...v1.1.0) (2026-01-31)
+
+
+### Features
+
+* add NeonPulse theme and DIMM temperature sensors ([413177d](https://github.com/oae/sensorpanel/commit/413177df499eb1f26a86a758a9856211b7bc7dd0))
+* **sensors:** add new sensors and enhanced sensor fields ([6c82d8d](https://github.com/oae/sensorpanel/commit/6c82d8deec7ecf2bc42ca32df0b9b00ccc91a4c9))
+* update dashboard preview image ([1ccebfb](https://github.com/oae/sensorpanel/commit/1ccebfb62102fd7e24c60fc207f16a83d5e17fc7))
+* update theme name from aida64-replica to NeonPulse in HTML and package-lock ([a792ea6](https://github.com/oae/sensorpanel/commit/a792ea648965ca6ada3a4e05fdd54b6fa669f321))
+
+
+### Bug Fixes
+
+* update README badges to correct repo path ([8b8b121](https://github.com/oae/sensorpanel/commit/8b8b12171e168d1e4be389729e01af2f7c13d45a))
+
 ## [1.0.2](https://github.com/oae/sensorpanel/compare/v1.0.1...v1.0.2) (2026-01-31)
 
 
