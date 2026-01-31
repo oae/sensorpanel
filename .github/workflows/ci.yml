@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.21', '1.22', '1.23']
+        go: ['1.23']
 
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +65,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
 
       - name: Install libusb
         run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
@@ -91,7 +91,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
 
       - name: Install libusb
         run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
