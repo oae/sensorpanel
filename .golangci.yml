@@ -1,0 +1,26 @@
+linters:
+  disable:
+    # Too strict for this project - many intentionally ignored error returns
+    # (e.g., cleanup functions, fire-and-forget calls)
+    - errcheck
+
+linters-settings:
+  staticcheck:
+    # Disable empty branch check - sometimes used for future expansion
+    checks: ["all", "-SA9003"]
+
+issues:
+  # Don't limit the number of issues per linter
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  
+  # Exclude test files from some checks
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - unused
+        - deadcode
+
+run:
+  # Timeout for analysis
+  timeout: 5m

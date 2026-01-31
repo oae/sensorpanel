@@ -673,11 +673,6 @@ func TestCreateColorBarsBufferWithSize(t *testing.T) {
 	}
 
 	// Check last row is black
-	barHeight := height / 8
-	lastBarStart := (height - 1) / barHeight
-	if lastBarStart >= 8 {
-		lastBarStart = 7
-	}
 	// Last row should be black
 	blackRGB565 := RGBToRGB565(0, 0, 0)
 	lastRowIdx := (height - 1) * width * 2
