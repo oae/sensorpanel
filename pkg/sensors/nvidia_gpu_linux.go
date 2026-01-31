@@ -34,6 +34,8 @@ func (p *NvidiaGPUProvider) Meta() SensorMeta {
 			{Name: "MemoryTotal", JSONName: "memory_total", TSName: "memoryTotal", Type: FieldTypeOptionalNumber, Unit: "MB", Description: "VRAM total"},
 			{Name: "Power", JSONName: "power", TSName: "power", Type: FieldTypeOptionalNumber, Unit: "W", Description: "Power draw"},
 			{Name: "FanSpeed", JSONName: "fan_speed", TSName: "fanSpeed", Type: FieldTypeOptionalNumber, Unit: "%", Description: "Fan speed"},
+			{Name: "Clock", JSONName: "clock", TSName: "clock", Type: FieldTypeOptionalNumber, Unit: "MHz", Description: "GPU clock speed"},
+			{Name: "MemoryClock", JSONName: "memory_clock", TSName: "memoryClock", Type: FieldTypeOptionalNumber, Unit: "MHz", Description: "Memory clock speed"},
 		},
 	}
 }
@@ -72,7 +74,7 @@ func (p *NvidiaGPUProvider) Collect(state *CollectorState) map[string]interface{
 
 	// Query GPU stats via nvidia-smi
 	cmd := exec.Command(smiPath,
-		"--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,fan.speed",
+		"--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,fan.speed,clocks.current.graphics,clocks.current.memory",
 		"--format=csv,noheader,nounits")
 
 	output, err := cmd.Output()
@@ -112,6 +114,18 @@ func (p *NvidiaGPUProvider) Collect(state *CollectorState) map[string]interface{
 
 	if fanSpeed, err := strconv.ParseFloat(strings.TrimSpace(parts[6]), 64); err == nil {
 		result["fan_speed"] = fanSpeed
+	}
+
+	if len(parts) > 7 {
+		if clock, err := strconv.ParseFloat(strings.TrimSpace(parts[7]), 64); err == nil {
+			result["clock"] = clock
+		}
+	}
+
+	if len(parts) > 8 {
+		if memClock, err := strconv.ParseFloat(strings.TrimSpace(parts[8]), 64); err == nil {
+			result["memory_clock"] = memClock
+		}
 	}
 
 	return result
