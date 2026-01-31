@@ -300,10 +300,10 @@ func TestDefaultMetadata(t *testing.T) {
 
 func TestTheme_IndexPath(t *testing.T) {
 	theme := &Theme{
-		Path: "/home/user/themes/my-theme",
+		Path: filepath.Join("home", "user", "themes", "my-theme"),
 	}
 
-	expected := "/home/user/themes/my-theme/dist/index.html"
+	expected := filepath.Join("home", "user", "themes", "my-theme", "dist", "index.html")
 	if got := theme.IndexPath(); got != expected {
 		t.Errorf("IndexPath() = %q, want %q", got, expected)
 	}
@@ -311,10 +311,10 @@ func TestTheme_IndexPath(t *testing.T) {
 
 func TestTheme_DistDir(t *testing.T) {
 	theme := &Theme{
-		Path: "/home/user/themes/my-theme",
+		Path: filepath.Join("home", "user", "themes", "my-theme"),
 	}
 
-	expected := "/home/user/themes/my-theme/dist"
+	expected := filepath.Join("home", "user", "themes", "my-theme", "dist")
 	if got := theme.DistDir(); got != expected {
 		t.Errorf("DistDir() = %q, want %q", got, expected)
 	}
@@ -564,10 +564,13 @@ func TestTheme_WalkDistFiles(t *testing.T) {
 
 	os.WriteFile(filepath.Join(themeDir, "package.json"), []byte("{}"), 0644)
 
-	theme, _ := Load("test-theme")
+	theme, err := Load("test-theme")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
 
 	var files []string
-	err := theme.WalkDistFiles(func(path string, d os.DirEntry) error {
+	err = theme.WalkDistFiles(func(path string, d os.DirEntry) error {
 		files = append(files, filepath.Base(path))
 		return nil
 	})

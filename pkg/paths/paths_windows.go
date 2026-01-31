@@ -24,7 +24,13 @@ func ConfigDir() (string, error) {
 
 // DataDir returns the LocalAppData directory for sensorpanel on Windows.
 // Default: %LOCALAPPDATA%\sensorpanel\
+// Respects XDG_DATA_HOME if set (for testing).
 func DataDir() (string, error) {
+	// Check XDG_DATA_HOME first (mainly for testing)
+	if xdgData := os.Getenv("XDG_DATA_HOME"); xdgData != "" {
+		return filepath.Join(xdgData, appName), nil
+	}
+
 	localAppData := os.Getenv("LOCALAPPDATA")
 	if localAppData == "" {
 		home, err := os.UserHomeDir()
