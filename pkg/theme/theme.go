@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alperen/sensorpanel/pkg/paths"
+	"github.com/oae/sensorpanel/pkg/paths"
 )
 
 // ErrThemeNotFound is returned when a theme doesn't exist.

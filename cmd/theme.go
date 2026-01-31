@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alperen/sensorpanel/pkg/browser"
-	"github.com/alperen/sensorpanel/pkg/config"
-	"github.com/alperen/sensorpanel/pkg/paths"
-	"github.com/alperen/sensorpanel/pkg/theme"
+	"github.com/oae/sensorpanel/pkg/browser"
+	"github.com/oae/sensorpanel/pkg/config"
+	"github.com/oae/sensorpanel/pkg/paths"
+	"github.com/oae/sensorpanel/pkg/theme"
 	"github.com/spf13/cobra"
 )
 

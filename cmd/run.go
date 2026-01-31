@@ -13,13 +13,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alperen/sensorpanel/pkg/browser"
-	"github.com/alperen/sensorpanel/pkg/config"
-	"github.com/alperen/sensorpanel/pkg/panel"
-	"github.com/alperen/sensorpanel/pkg/renderer"
-	"github.com/alperen/sensorpanel/pkg/sensors"
-	"github.com/alperen/sensorpanel/pkg/server"
-	"github.com/alperen/sensorpanel/pkg/theme"
+	"github.com/oae/sensorpanel/pkg/browser"
+	"github.com/oae/sensorpanel/pkg/config"
+	"github.com/oae/sensorpanel/pkg/panel"
+	"github.com/oae/sensorpanel/pkg/renderer"
+	"github.com/oae/sensorpanel/pkg/sensors"
+	"github.com/oae/sensorpanel/pkg/server"
+	"github.com/oae/sensorpanel/pkg/theme"
 )
 
 var (

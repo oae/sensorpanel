@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/alperen/sensorpanel/pkg/paths"
+	"github.com/oae/sensorpanel/pkg/paths"
 )
 
 // Chrome for Testing download URLs (stable versions)

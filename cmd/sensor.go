@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alperen/sensorpanel/pkg/config"
-	"github.com/alperen/sensorpanel/pkg/sensors"
+	"github.com/oae/sensorpanel/pkg/config"
+	"github.com/oae/sensorpanel/pkg/sensors"
 	"github.com/spf13/cobra"
 )
 

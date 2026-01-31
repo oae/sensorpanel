@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/alperen/sensorpanel/pkg/paths"
+	"github.com/oae/sensorpanel/pkg/paths"
 )
 
 var pruneCmd = &cobra.Command{

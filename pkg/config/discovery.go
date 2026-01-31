@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alperen/sensorpanel/pkg/device"
+	"github.com/oae/sensorpanel/pkg/device"
 	"github.com/google/gousb"
 )
 

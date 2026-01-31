@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/alperen/sensorpanel/pkg/service"
+	"github.com/oae/sensorpanel/pkg/service"
 	"github.com/spf13/cobra"
 )
 

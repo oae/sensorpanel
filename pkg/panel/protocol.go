@@ -22,7 +22,7 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/alperen/sensorpanel/pkg/device"
+	"github.com/oae/sensorpanel/pkg/device"
 )
 
 // Display dimensions (detected devices may vary - these are common defaults)

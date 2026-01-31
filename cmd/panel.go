@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/alperen/sensorpanel/pkg/config"
-	"github.com/alperen/sensorpanel/pkg/panel"
+	"github.com/oae/sensorpanel/pkg/config"
+	"github.com/oae/sensorpanel/pkg/panel"
 	"github.com/spf13/cobra"
 )
 

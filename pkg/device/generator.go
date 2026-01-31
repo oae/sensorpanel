@@ -161,7 +161,7 @@ const profileTemplate = `package device
 import (
 	"image"
 
-	"github.com/alperen/sensorpanel/pkg/panel"
+	"github.com/oae/sensorpanel/pkg/panel"
 )
 
 // {{.StructName}} implements DeviceProfile for {{.Name}}.

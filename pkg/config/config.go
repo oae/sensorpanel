@@ -17,7 +17,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alperen/sensorpanel/pkg/paths"
+	"github.com/oae/sensorpanel/pkg/paths"
 )
 
 const (
