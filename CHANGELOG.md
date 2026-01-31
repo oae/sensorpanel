@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/oae/sensorpanel/compare/v1.0.1...v1.0.2) (2026-01-31)
+
+
+### Bug Fixes
+
+* **ci:** use macos-15-intel for x86_64 builds ([f051002](https://github.com/oae/sensorpanel/commit/f0510028d3dd55f6340c38f16e7d58eab9d604bc))
+
 ## [1.0.1](https://github.com/oae/sensorpanel/compare/v1.0.0...v1.0.1) (2026-01-31)
 
 
