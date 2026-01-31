@@ -352,7 +352,7 @@ func TestList_WithThemes(t *testing.T) {
 		t.Fatalf("List() error = %v", err)
 	}
 	if len(themes) != 1 {
-		t.Errorf("List() returned %d themes, want 1", len(themes))
+		t.Fatalf("List() returned %d themes, want 1", len(themes))
 	}
 	if themes[0].Name != "test-theme" {
 		t.Errorf("Theme name = %q, want test-theme", themes[0].Name)
