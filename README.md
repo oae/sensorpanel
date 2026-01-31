@@ -28,8 +28,10 @@ A cross-platform CLI tool for driving USB LCD displays as real-time system monit
 ### 1. Build
 
 ```bash
-# With Mage (recommended)
+# Install Mage (recommended build tool)
 go install github.com/magefile/mage@latest
+
+# Build with Mage
 mage build
 
 # Or directly with Go
@@ -465,6 +467,31 @@ nvidia-smi
 
 # AMD: Check sysfs
 ls /sys/class/drm/card*/device/gpu_busy_percent
+```
+
+## Development with Mage
+
+SensorPanel uses [Mage](https://magefile.org/) as its build tool. Install it with:
+
+```bash
+go install github.com/magefile/mage@latest
+```
+
+### Available Targets
+
+```bash
+mage -l              # List all targets
+
+mage build           # Build for current platform (default)
+mage install         # Build and install to GOPATH/bin
+mage test            # Run all tests
+mage vet             # Run go vet
+mage lint            # Run golangci-lint
+mage check           # Run all checks (vet, test, lint)
+mage clean           # Remove build artifacts
+mage release         # Cross-compile for all platforms (dist/)
+mage dev             # Build and run the dashboard
+mage devTheme        # Build and start theme dev mode
 ```
 
 ## Testing
