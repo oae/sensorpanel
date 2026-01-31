@@ -45,6 +45,26 @@ func (p *NetworkProvider) Available() bool {
 	return err == nil
 }
 
+// Configure applies the given config to the provider.
+func (p *NetworkProvider) Configure(config *Config) {
+	if pattern, ok := config.GetStringOption("network.interface"); ok {
+		p.interfacePattern = pattern
+	}
+}
+
+// Options returns the configuration options for this provider.
+func (p *NetworkProvider) Options() []OptionDef {
+	return []OptionDef{
+		{
+			Key:         "network.interface",
+			Type:        "string",
+			Default:     "* (all interfaces)",
+			Description: "Network interface filter pattern (supports * wildcard)",
+			Example:     "--opt network.interface=eth*",
+		},
+	}
+}
+
 // Collect gathers network sensor data.
 func (p *NetworkProvider) Collect(state *CollectorState) map[string]interface{} {
 	now := time.Now()
@@ -123,14 +143,4 @@ func (p *NetworkProvider) Collect(state *CollectorState) map[string]interface{} 
 	return map[string]interface{}{
 		"_items": networks,
 	}
-}
-
-// SetInterfacePattern sets the interface filter pattern.
-func (p *NetworkProvider) SetInterfacePattern(pattern string) {
-	p.interfacePattern = pattern
-}
-
-// NewNetworkProvider creates a network provider with specific interface filter.
-func NewNetworkProvider(pattern string) *NetworkProvider {
-	return &NetworkProvider{interfacePattern: pattern}
 }

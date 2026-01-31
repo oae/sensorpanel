@@ -35,8 +35,3 @@ func CacheDir() (string, error) {
 
 	return filepath.Join(home, "Library", "Caches", appName), nil
 }
-
-// DefaultDiskMounts returns the default disk mount points for macOS.
-func DefaultDiskMounts() []string {
-	return []string{"/"}
-}

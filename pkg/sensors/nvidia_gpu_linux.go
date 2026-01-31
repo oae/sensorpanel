@@ -43,6 +43,26 @@ func (p *NvidiaGPUProvider) Available() bool {
 	return p.findNvidiaSMI() != ""
 }
 
+// Configure applies the given config to the provider.
+func (p *NvidiaGPUProvider) Configure(config *Config) {
+	if path, ok := config.GetStringOption("nvidia_gpu.smi_path"); ok {
+		p.nvidiaSMIPath = path
+	}
+}
+
+// Options returns the configuration options for this provider.
+func (p *NvidiaGPUProvider) Options() []OptionDef {
+	return []OptionDef{
+		{
+			Key:         "nvidia_gpu.smi_path",
+			Type:        "string",
+			Default:     "nvidia-smi (searched in PATH)",
+			Description: "Custom path to nvidia-smi binary",
+			Example:     "--opt nvidia_gpu.smi_path=/usr/local/bin/nvidia-smi",
+		},
+	}
+}
+
 // Collect gathers NVIDIA GPU sensor data.
 func (p *NvidiaGPUProvider) Collect(state *CollectorState) map[string]interface{} {
 	smiPath := p.findNvidiaSMI()
@@ -123,9 +143,4 @@ func (p *NvidiaGPUProvider) findNvidiaSMI() string {
 	}
 
 	return ""
-}
-
-// SetNvidiaSMIPath sets a custom path for nvidia-smi.
-func (p *NvidiaGPUProvider) SetNvidiaSMIPath(path string) {
-	p.nvidiaSMIPath = path
 }

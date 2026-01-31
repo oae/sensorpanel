@@ -7,29 +7,15 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if !cfg.ShowCPU {
-		t.Error("ShowCPU should be true by default")
+	// EnabledSensors should be nil (all sensors enabled)
+	if cfg.EnabledSensors != nil {
+		t.Error("EnabledSensors should be nil by default (all sensors enabled)")
 	}
-	if !cfg.ShowGPU {
-		t.Error("ShowGPU should be true by default")
+	if cfg.DisabledSensors != nil {
+		t.Error("DisabledSensors should be nil by default")
 	}
-	if !cfg.ShowRAM {
-		t.Error("ShowRAM should be true by default")
-	}
-	if !cfg.ShowDisk {
-		t.Error("ShowDisk should be true by default")
-	}
-	if !cfg.ShowNetwork {
-		t.Error("ShowNetwork should be true by default")
-	}
-	if len(cfg.DiskMounts) != 1 || cfg.DiskMounts[0] != "/" {
-		t.Errorf("DiskMounts = %v, want [\"/\"]", cfg.DiskMounts)
-	}
-	if cfg.NetworkInterface != "*" {
-		t.Errorf("NetworkInterface = %q, want \"*\"", cfg.NetworkInterface)
-	}
-	if cfg.GPUMethod != "auto" {
-		t.Errorf("GPUMethod = %q, want \"auto\"", cfg.GPUMethod)
+	if cfg.Options != nil {
+		t.Error("Options should be nil by default (providers use their defaults)")
 	}
 }
 

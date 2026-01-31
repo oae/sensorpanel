@@ -95,8 +95,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.UpdateInterval != 1.0 {
 		t.Errorf("UpdateInterval = %f, want 1.0", cfg.UpdateInterval)
 	}
-	if len(cfg.DiskMounts) != 1 || cfg.DiskMounts[0] != "/" {
-		t.Errorf("DiskMounts = %v, want [\"/\"]", cfg.DiskMounts)
+	if cfg.SensorOptions != nil {
+		t.Errorf("SensorOptions = %v, want nil", cfg.SensorOptions)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestSaveAndLoad(t *testing.T) {
 		Brightness:     5,
 		Theme:          "my-theme",
 		UpdateInterval: 2.5,
-		DiskMounts:     []string{"/", "/home"},
+		SensorOptions:  map[string]interface{}{"disk.mounts": []string{"/", "/home"}},
 	}
 
 	// Save
@@ -204,8 +204,10 @@ func TestSaveAndLoad(t *testing.T) {
 	if loaded.UpdateInterval != 2.5 {
 		t.Errorf("UpdateInterval = %f, want 2.5", loaded.UpdateInterval)
 	}
-	if len(loaded.DiskMounts) != 2 {
-		t.Errorf("DiskMounts length = %d, want 2", len(loaded.DiskMounts))
+	if loaded.SensorOptions == nil {
+		t.Error("SensorOptions = nil, want non-nil")
+	} else if _, ok := loaded.SensorOptions["disk.mounts"]; !ok {
+		t.Error("SensorOptions missing disk.mounts key")
 	}
 }
 

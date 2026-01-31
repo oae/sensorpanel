@@ -51,8 +51,3 @@ func CacheDir() (string, error) {
 
 	return filepath.Join(home, ".cache", appName), nil
 }
-
-// DefaultDiskMounts returns the default disk mount points for Linux.
-func DefaultDiskMounts() []string {
-	return []string{"/"}
-}

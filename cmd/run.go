@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,14 +23,11 @@ import (
 )
 
 var (
-	runInterval    float64
-	runBrightness  int
-	runShowCPU     bool
-	runShowGPU     bool
-	runShowRAM     bool
-	runShowDisk    bool
-	runShowNetwork bool
-	runDiskMounts  []string
+	runInterval       float64
+	runBrightness     int
+	runSensors        []string
+	runExcludeSensors []string
+	runOpts           []string
 )
 
 var runCmd = &cobra.Command{
@@ -38,12 +36,27 @@ var runCmd = &cobra.Command{
 	Long: `Start the sensor panel dashboard, displaying system metrics
 on the USB display in a continuous loop.
 
-The dashboard shows:
-  - CPU: temperature, load, frequency
-  - GPU: temperature, load, memory, power (NVIDIA/AMD)
-  - RAM: usage percentage and GB
-  - Disk: usage per mount point
-  - Network: throughput per interface
+By default, all available sensors are enabled. Use --sensors to enable only
+specific sensors, or --exclude to disable specific sensors.
+
+Available sensors (varies by platform):
+  cpu        - CPU temperature, load, frequency
+  memory     - RAM usage
+  nvidia_gpu - NVIDIA GPU stats
+  amd_gpu    - AMD GPU stats
+  disk       - Disk usage per mount point
+  network    - Network throughput per interface
+
+Sensor options (use --opt key=value):
+  disk.mounts=/,/home      - Disk mount points to monitor
+  network.interface=eth*   - Network interface filter pattern
+  nvidia_gpu.smi_path=...  - Custom path to nvidia-smi
+
+Examples:
+  sensorpanel run                                    # All sensors
+  sensorpanel run -s cpu,memory,disk                 # Only CPU, memory, and disk
+  sensorpanel run -x network                         # All except network
+  sensorpanel run --opt disk.mounts=/,/home          # Monitor specific mounts
 
 Press Ctrl+C to stop. The backlight will be turned off on exit.`,
 	RunE: runDashboard,
@@ -54,12 +67,9 @@ func init() {
 
 	runCmd.Flags().Float64VarP(&runInterval, "interval", "i", 1.0, "Update interval in seconds (min 0.5)")
 	runCmd.Flags().IntVarP(&runBrightness, "brightness", "b", 7, "Backlight brightness (0-7)")
-	runCmd.Flags().BoolVar(&runShowCPU, "cpu", true, "Show CPU stats")
-	runCmd.Flags().BoolVar(&runShowGPU, "gpu", true, "Show GPU stats")
-	runCmd.Flags().BoolVar(&runShowRAM, "ram", true, "Show RAM stats")
-	runCmd.Flags().BoolVar(&runShowDisk, "disk", true, "Show disk stats")
-	runCmd.Flags().BoolVar(&runShowNetwork, "network", true, "Show network stats")
-	runCmd.Flags().StringSliceVarP(&runDiskMounts, "mounts", "m", []string{"/"}, "Disk mount points to monitor")
+	runCmd.Flags().StringSliceVarP(&runSensors, "sensors", "s", nil, "Sensors to enable (e.g., cpu,memory,disk). Default: all available")
+	runCmd.Flags().StringSliceVarP(&runExcludeSensors, "exclude", "x", nil, "Sensors to exclude (e.g., network,nvidia_gpu)")
+	runCmd.Flags().StringSliceVarP(&runOpts, "opt", "o", nil, "Sensor options in key=value format (e.g., disk.mounts=/,/home)")
 }
 
 func runDashboard(cmd *cobra.Command, args []string) error {
@@ -75,9 +85,6 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	}
 	if !cmd.Flags().Changed("brightness") {
 		runBrightness = cfg.Brightness
-	}
-	if !cmd.Flags().Changed("mounts") && len(cfg.DiskMounts) > 0 {
-		runDiskMounts = cfg.DiskMounts
 	}
 
 	// Validate interval
@@ -109,15 +116,48 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	}
 
 	// Configure sensors
+	var enabledSensors map[string]bool
+	if len(runSensors) > 0 {
+		// If --sensors flag is provided, only enable those sensors
+		enabledSensors = make(map[string]bool)
+		for _, s := range runSensors {
+			enabledSensors[s] = true
+		}
+	}
+	// If no --sensors flag, enabledSensors stays nil (all enabled)
+
+	// Start with sensor options from config, then override with CLI flags
+	var options map[string]interface{}
+	if cfg.SensorOptions != nil {
+		options = make(map[string]interface{})
+		for k, v := range cfg.SensorOptions {
+			options[k] = v
+		}
+	}
+
+	// Parse sensor options from --opt flags (override config)
+	if len(runOpts) > 0 {
+		if options == nil {
+			options = make(map[string]interface{})
+		}
+		for _, opt := range runOpts {
+			key, value, ok := strings.Cut(opt, "=")
+			if !ok {
+				return fmt.Errorf("invalid option format %q (expected key=value)", opt)
+			}
+			// If value contains commas, treat it as a string slice
+			if strings.Contains(value, ",") {
+				options[key] = strings.Split(value, ",")
+			} else {
+				options[key] = value
+			}
+		}
+	}
+
 	sensorConfig := &sensors.Config{
-		ShowCPU:          runShowCPU,
-		ShowGPU:          runShowGPU,
-		ShowRAM:          runShowRAM,
-		ShowDisk:         runShowDisk,
-		ShowNetwork:      runShowNetwork,
-		DiskMounts:       runDiskMounts,
-		NetworkInterface: "*",
-		GPUMethod:        "auto",
+		EnabledSensors:  enabledSensors,
+		DisabledSensors: runExcludeSensors,
+		Options:         options,
 	}
 	collector := sensors.NewCollector(sensorConfig)
 

@@ -19,38 +19,77 @@ import "fmt"
 
 // Config configures the sensor collector.
 type Config struct {
-	// Which sensors to collect
-	ShowCPU     bool
-	ShowGPU     bool
-	ShowRAM     bool
-	ShowDisk    bool
-	ShowNetwork bool
+	// EnabledSensors controls which sensors are enabled.
+	// Key is the sensor ID (e.g., "cpu", "memory", "nvidia_gpu").
+	// If nil, all available sensors are enabled.
+	// If empty map, no sensors are enabled.
+	EnabledSensors map[string]bool
 
-	// Disk mount points to monitor
-	DiskMounts []string
+	// DisabledSensors is a list of sensor IDs to disable.
+	// This is applied after EnabledSensors, allowing selective disabling.
+	DisabledSensors []string
 
-	// Network interface pattern (e.g., "eth*", "enp*", "*" for all)
-	NetworkInterface string
-
-	// GPU collection method: "auto", "nvidia", "amd"
-	GPUMethod string
-
-	// Path to nvidia-smi (auto-detected if empty)
-	NvidiaSMIPath string
+	// Options contains provider-specific configuration.
+	// Keys are in the format "provider_id.option_name" (e.g., "disk.mounts", "network.interface").
+	// Values can be strings, []string, or other types depending on the option.
+	Options map[string]interface{}
 }
 
 // DefaultConfig returns a default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		ShowCPU:          true,
-		ShowGPU:          true,
-		ShowRAM:          true,
-		ShowDisk:         true,
-		ShowNetwork:      true,
-		DiskMounts:       []string{"/"},
-		NetworkInterface: "*",
-		GPUMethod:        "auto",
+		EnabledSensors:  nil, // nil means all sensors enabled
+		DisabledSensors: nil,
+		Options:         nil, // nil means providers use their defaults
 	}
+}
+
+// GetOption retrieves a typed option value from the config.
+func GetOption[T any](c *Config, key string) (T, bool) {
+	var zero T
+	if c.Options == nil {
+		return zero, false
+	}
+	v, ok := c.Options[key]
+	if !ok {
+		return zero, false
+	}
+	typed, ok := v.(T)
+	return typed, ok
+}
+
+// GetStringSliceOption retrieves a string slice option, handling both []string and []interface{}.
+func (c *Config) GetStringSliceOption(key string) ([]string, bool) {
+	if c.Options == nil {
+		return nil, false
+	}
+	v, ok := c.Options[key]
+	if !ok {
+		return nil, false
+	}
+
+	// Direct []string
+	if ss, ok := v.([]string); ok {
+		return ss, true
+	}
+
+	// []interface{} from JSON unmarshaling
+	if ii, ok := v.([]interface{}); ok {
+		result := make([]string, 0, len(ii))
+		for _, i := range ii {
+			if s, ok := i.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result, len(result) > 0
+	}
+
+	return nil, false
+}
+
+// GetStringOption retrieves a string option.
+func (c *Config) GetStringOption(key string) (string, bool) {
+	return GetOption[string](c, key)
 }
 
 // FormatBytes formats a byte count as a human-readable string.
