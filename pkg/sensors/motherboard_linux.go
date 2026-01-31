@@ -31,6 +31,10 @@ func (p *MotherboardProvider) Meta() SensorMeta {
 			{Name: "SystemFan2", JSONName: "system_fan2", TSName: "systemFan2", Type: FieldTypeOptionalNumber, Unit: "RPM", Description: "System fan 2 speed"},
 			{Name: "SystemFan3", JSONName: "system_fan3", TSName: "systemFan3", Type: FieldTypeOptionalNumber, Unit: "RPM", Description: "System fan 3 speed"},
 			{Name: "CPUVoltage", JSONName: "cpu_voltage", TSName: "cpuVoltage", Type: FieldTypeOptionalNumber, Unit: "V", Description: "CPU core voltage"},
+			{Name: "Dimm1Temp", JSONName: "dimm1_temp", TSName: "dimm1Temp", Type: FieldTypeOptionalNumber, Unit: "°C", Description: "DIMM 1 temperature"},
+			{Name: "Dimm2Temp", JSONName: "dimm2_temp", TSName: "dimm2Temp", Type: FieldTypeOptionalNumber, Unit: "°C", Description: "DIMM 2 temperature"},
+			{Name: "Dimm3Temp", JSONName: "dimm3_temp", TSName: "dimm3Temp", Type: FieldTypeOptionalNumber, Unit: "°C", Description: "DIMM 3 temperature"},
+			{Name: "Dimm4Temp", JSONName: "dimm4_temp", TSName: "dimm4Temp", Type: FieldTypeOptionalNumber, Unit: "°C", Description: "DIMM 4 temperature"},
 		},
 	}
 }
@@ -115,7 +119,56 @@ func (p *MotherboardProvider) Collect(state *CollectorState) map[string]interfac
 		}
 	}
 
+	// Read DIMM temperatures from spd5118 sensors (DDR5 SPD Hub)
+	dimmTemps := p.readDimmTemperatures()
+	for i, temp := range dimmTemps {
+		if temp > 0 {
+			result[dimmTempKey(i+1)] = temp
+		}
+	}
+
 	return result
+}
+
+func dimmTempKey(index int) string {
+	switch index {
+	case 1:
+		return "dimm1_temp"
+	case 2:
+		return "dimm2_temp"
+	case 3:
+		return "dimm3_temp"
+	case 4:
+		return "dimm4_temp"
+	default:
+		return ""
+	}
+}
+
+func (p *MotherboardProvider) readDimmTemperatures() []float64 {
+	var temps []float64
+
+	// Find all spd5118 hwmon devices (DDR5 SPD Hub temperature sensors)
+	hwmonPaths, _ := filepath.Glob("/sys/class/hwmon/hwmon*/name")
+	for _, namePath := range hwmonPaths {
+		nameBytes, err := os.ReadFile(namePath)
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(string(nameBytes))
+
+		if name == "spd5118" {
+			hwmonDir := filepath.Dir(namePath)
+			tempPath := filepath.Join(hwmonDir, "temp1_input")
+			if data, err := os.ReadFile(tempPath); err == nil {
+				if milliC, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
+					temps = append(temps, float64(milliC)/1000.0)
+				}
+			}
+		}
+	}
+
+	return temps
 }
 
 func (p *MotherboardProvider) findMotherboardHwmon() string {

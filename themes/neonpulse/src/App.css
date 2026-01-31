@@ -1,0 +1,459 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 480px;
+  height: 320px;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: linear-gradient(135deg, #1a1a3e 0%, #2d1b4e 30%, #1e3a5f 60%, #0d4d4d 100%);
+  color: white;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 16px;
+  color: #888;
+}
+
+.loading.error {
+  color: #ff6b6b;
+}
+
+/* Grid Layout:
+   Row 1: Device+Time+Storage | CPU (fit content)
+   Row 2: GPU | Memory (fills remaining)
+*/
+.dashboard {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 4px;
+  padding: 4px;
+  height: 100%;
+  width: 100%;
+}
+
+.panel {
+  background: rgba(30, 20, 50, 0.7);
+  border: 1px solid rgba(100, 80, 150, 0.5);
+  border-radius: 4px;
+  padding: 6px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Device Panel with Time and Storage - top left */
+.device-panel {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.device-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.device-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.time-section {
+  text-align: right;
+}
+
+/* Storage list at bottom of device panel */
+.storage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: auto;
+}
+
+.storage-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.storage-inline .storage-label {
+  font-weight: bold;
+  min-width: 50px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.storage-inline .storage-percent {
+  min-width: 28px;
+  text-align: right;
+}
+
+.storage-inline .storage-bar {
+  flex: 1;
+  height: 5px;
+  background: rgba(50, 50, 80, 0.5);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.storage-inline .storage-bar .bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  border-radius: 3px;
+}
+
+.storage-inline .storage-free {
+  color: #aaa;
+  min-width: 45px;
+  text-align: right;
+}
+
+.panel-title {
+  font-size: 11px;
+  color: #aaa;
+  margin-bottom: 2px;
+}
+
+.device-name {
+  font-size: 16px;
+  font-weight: bold;
+  color: #fff;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.status-online {
+  font-size: 11px;
+  color: #4ade80;
+}
+
+.network-speed {
+  display: flex;
+  gap: 6px;
+  font-size: 9px;
+}
+
+.net-down {
+  color: #06b6d4;
+}
+
+.net-up {
+  color: #f97316;
+}
+
+.time {
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.date {
+  font-size: 11px;
+  color: #aaa;
+}
+
+/* CPU Panel - top right */
+.cpu-panel {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.cpu-header {
+  margin-bottom: 2px;
+}
+
+.cpu-name {
+  font-size: 10px;
+  font-weight: bold;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cpu-content {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  align-items: center;
+}
+
+.cpu-stats, .gpu-stats {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+}
+
+/* GPU Panel - left side, row 2 */
+.gpu-panel {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+}
+
+.gpu-name {
+  font-size: 10px;
+  font-weight: bold;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #fff;
+}
+
+.gpu-content {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+
+/* Memory Panel - right side, row 2 */
+.memory-panel {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+}
+
+.memory-title {
+  font-size: 10px;
+  font-weight: bold;
+  color: #fff;
+  margin-bottom: 2px;
+}
+
+.memory-header {
+  font-size: 9px;
+  color: #aaa;
+  margin-bottom: 6px;
+}
+
+/* DIMM Layout - represents physical motherboard slots */
+.dimm-layout {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex: 1;
+  align-items: center;
+}
+
+.dimm-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.dimm-temp-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.dimm-slot.active .dimm-temp-circle {
+  background: linear-gradient(180deg, #f97316 0%, #dc2626 100%);
+  border: 2px solid #fbbf24;
+  color: #fff;
+}
+
+.dimm-slot.inactive .dimm-temp-circle {
+  background: rgba(50, 50, 80, 0.5);
+  border: 2px solid #555;
+  color: #666;
+}
+
+.dimm-slot-label {
+  font-size: 8px;
+  color: #888;
+}
+
+.memory-stats {
+  margin-top: auto;
+}
+
+/* Temperature Rings */
+.temp-ring {
+  width: 55px;
+  height: 55px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.temp-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ring-bg {
+  fill: none;
+  stroke: rgba(100, 100, 100, 0.3);
+  stroke-width: 6;
+}
+
+.ring-value {
+  fill: none;
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s ease;
+}
+
+.cpu-ring-value {
+  stroke: #ff8c00;
+}
+
+.gpu-ring-value {
+  stroke: #ff6b35;
+}
+
+.ring-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  font-weight: bold;
+}
+
+/* Stat Rows */
+.stat-row {
+  display: grid;
+  grid-template-columns: 55px 58px 1fr;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+}
+
+.stat-label {
+  color: #ccc;
+}
+
+.stat-value {
+  text-align: right;
+  font-weight: 500;
+}
+
+.stat-bar {
+  height: 6px;
+  background: rgba(50, 50, 80, 0.5);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stat-bar .bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.gradient-blue .bar-fill {
+  background: linear-gradient(90deg, #3b82f6, #06b6d4);
+}
+
+.gradient-rainbow .bar-fill {
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899, #f97316);
+}
+
+.gradient-yellow .bar-fill {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+/* Temperature Graph - fills remaining space at bottom */
+.temp-graph {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-top: auto;
+  padding: 4px;
+  background: rgba(20, 30, 40, 0.6);
+  border-radius: 3px;
+  border: 1px solid rgba(100, 150, 200, 0.3);
+  min-height: 50px;
+  overflow: hidden;
+}
+
+.gpu-panel .temp-graph {
+  flex: 1;
+}
+
+.graph-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #aaa;
+  min-width: 18px;
+  flex-shrink: 0;
+}
+
+.graph-canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.graph-canvas-container canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Memory styles */
+.memory-usage {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+}
+
+.memory-bar {
+  height: 6px;
+  background: rgba(50, 50, 80, 0.5);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.memory-bar .bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #06b6d4, #3b82f6, #8b5cf6);
+  border-radius: 3px;
+}
+
+.memory-details {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #aaa;
+  margin-top: 4px;
+}

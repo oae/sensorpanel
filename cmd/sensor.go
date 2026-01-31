@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/alperen/sensorpanel/pkg/config"
 	"github.com/alperen/sensorpanel/pkg/sensors"
 	"github.com/spf13/cobra"
 )
@@ -51,15 +53,30 @@ or configured in the config file.`,
 	RunE: runSensorOpts,
 }
 
+var sensorReadCmd = &cobra.Command{
+	Use:   "read [sensor_id...]",
+	Short: "Read current sensor values",
+	Long: `Read and display current values from all or specified sensors.
+
+Examples:
+  sensorpanel sensor read           # Read all sensors
+  sensorpanel sensor read cpu       # Read only CPU sensor
+  sensorpanel sensor read cpu memory # Read CPU and memory sensors
+  sensorpanel sensor read --json    # Output as JSON`,
+	RunE: runSensorRead,
+}
+
 func init() {
 	rootCmd.AddCommand(sensorCmd)
 	sensorCmd.AddCommand(sensorListCmd)
 	sensorCmd.AddCommand(sensorTypesCmd)
 	sensorCmd.AddCommand(sensorCreateCmd)
 	sensorCmd.AddCommand(sensorOptsCmd)
+	sensorCmd.AddCommand(sensorReadCmd)
 
 	sensorListCmd.Flags().BoolP("available", "a", false, "Only show available sensors on this system")
 	sensorTypesCmd.Flags().StringP("output", "o", "", "Output file path (default: stdout)")
+	sensorReadCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 }
 
 func runSensorList(cmd *cobra.Command, args []string) error {
@@ -487,6 +504,191 @@ func sensorToCamelCase(s string) string {
 	}
 
 	return result
+}
+
+func runSensorRead(cmd *cobra.Command, args []string) error {
+	jsonOutput, _ := cmd.Flags().GetBool("json")
+
+	// Load config from file to get sensor options
+	cfg, err := config.Load()
+	if err != nil {
+		// Fall back to default config if no config file
+		cfg = &config.Config{}
+	}
+
+	// Create sensor config with options from config file
+	sensorConfig := sensors.DefaultConfig()
+	if cfg.SensorOptions != nil {
+		sensorConfig.Options = make(map[string]interface{})
+		for k, v := range cfg.SensorOptions {
+			sensorConfig.Options[k] = v
+		}
+	}
+
+	collector := sensors.NewCollector(sensorConfig)
+
+	// Collect data
+	var data map[string]interface{}
+
+	if len(args) == 0 {
+		// Collect all sensors
+		data = collector.CollectAll()
+	} else {
+		// Collect specified sensors
+		data = make(map[string]interface{})
+		for _, id := range args {
+			if sensorData, ok := collector.CollectByID(id); ok {
+				data[id] = sensorData
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: sensor '%s' not available\n", id)
+			}
+		}
+	}
+
+	if len(data) == 0 {
+		fmt.Println("No sensor data available.")
+		return nil
+	}
+
+	// Output as JSON
+	if jsonOutput {
+		jsonBytes, err := jsonMarshalIndent(data)
+		if err != nil {
+			return fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		fmt.Println(string(jsonBytes))
+		return nil
+	}
+
+	// Pretty print output
+	registry := sensors.GlobalRegistry()
+
+	// Group sensors by category for display
+	categories := make(map[string][]string)
+	for sensorID := range data {
+		if p, ok := registry.Get(sensorID); ok {
+			cat := p.Meta().Category
+			categories[cat] = append(categories[cat], sensorID)
+		}
+	}
+
+	// Sort categories
+	catNames := make([]string, 0, len(categories))
+	for cat := range categories {
+		catNames = append(catNames, cat)
+	}
+	sort.Strings(catNames)
+
+	for _, cat := range catNames {
+		fmt.Printf("\n[%s]\n", strings.ToUpper(cat))
+
+		sensorIDs := categories[cat]
+		sort.Strings(sensorIDs)
+
+		for _, sensorID := range sensorIDs {
+			sensorData := data[sensorID]
+			p, _ := registry.Get(sensorID)
+			meta := p.Meta()
+
+			fmt.Printf("  %s\n", meta.Name)
+
+			// Handle map data (arrays like disk, network)
+			if meta.IsArray {
+				if mapData, ok := sensorData.(map[string]interface{}); ok {
+					// Array sensors store items in "_items" key
+					if items, ok := mapData["_items"].([]map[string]interface{}); ok {
+						for _, item := range items {
+							// Use the array key field as the header
+							keyValue := ""
+							if v, ok := item[meta.ArrayKey]; ok {
+								keyValue = fmt.Sprintf("%v", v)
+							}
+							fmt.Printf("    [%s]\n", keyValue)
+							printSensorFields(meta.Fields, item, "      ")
+						}
+					} else if items, ok := mapData["_items"].([]interface{}); ok {
+						// Handle case where items are []interface{}
+						for _, item := range items {
+							if itemMap, ok := item.(map[string]interface{}); ok {
+								keyValue := ""
+								if v, ok := itemMap[meta.ArrayKey]; ok {
+									keyValue = fmt.Sprintf("%v", v)
+								}
+								fmt.Printf("    [%s]\n", keyValue)
+								printSensorFields(meta.Fields, itemMap, "      ")
+							}
+						}
+					}
+				}
+			} else {
+				// Single sensor data
+				if mapData, ok := sensorData.(map[string]interface{}); ok {
+					printSensorFields(meta.Fields, mapData, "    ")
+				}
+			}
+		}
+	}
+
+	fmt.Println()
+	return nil
+}
+
+func printSensorFields(fields []sensors.FieldDef, data map[string]interface{}, indent string) {
+	for _, field := range fields {
+		value, ok := data[field.JSONName]
+		if !ok {
+			continue
+		}
+
+		// Format value based on type and unit
+		var formatted string
+		switch v := value.(type) {
+		case float64:
+			if field.Unit == "%" {
+				formatted = fmt.Sprintf("%.1f%%", v)
+			} else if field.Unit == "°C" {
+				formatted = fmt.Sprintf("%.1f°C", v)
+			} else if field.Unit == "W" {
+				formatted = fmt.Sprintf("%.2f W", v)
+			} else if field.Unit == "V" {
+				formatted = fmt.Sprintf("%.3f V", v)
+			} else if field.Unit == "MHz" {
+				formatted = fmt.Sprintf("%.0f MHz", v)
+			} else if field.Unit == "RPM" {
+				formatted = fmt.Sprintf("%.0f RPM", v)
+			} else if field.Unit == "MB" {
+				if v >= 1024 {
+					formatted = fmt.Sprintf("%.1f GB", v/1024)
+				} else {
+					formatted = fmt.Sprintf("%.0f MB", v)
+				}
+			} else if field.Unit == "GB" {
+				formatted = fmt.Sprintf("%.1f GB", v)
+			} else if field.Unit == "B/s" {
+				formatted = sensors.FormatBytesPerSec(v)
+			} else if field.Unit == "bytes" {
+				formatted = sensors.FormatBytes(v)
+			} else {
+				formatted = fmt.Sprintf("%.2f", v)
+			}
+		case string:
+			formatted = v
+		case bool:
+			if v {
+				formatted = "yes"
+			} else {
+				formatted = "no"
+			}
+		default:
+			formatted = fmt.Sprintf("%v", v)
+		}
+
+		fmt.Printf("%s%-16s %s\n", indent, field.Name+":", formatted)
+	}
+}
+
+func jsonMarshalIndent(v interface{}) ([]byte, error) {
+	return json.MarshalIndent(v, "", "  ")
 }
 
 func runSensorOpts(cmd *cobra.Command, args []string) error {

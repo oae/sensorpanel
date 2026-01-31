@@ -261,10 +261,20 @@ Press Ctrl+C to stop all servers.`,
 		fmt.Printf("Starting development server for theme: %s\n", themeName)
 		fmt.Printf("Theme path: %s\n\n", t.Path)
 
-		// Parse sensor options from --opt flags
+		// Load sensor options from config file first
 		var sensorOptions map[string]interface{}
-		if len(themeDevOpts) > 0 {
+		if cfg, err := config.Load(); err == nil && cfg.SensorOptions != nil {
 			sensorOptions = make(map[string]interface{})
+			for k, v := range cfg.SensorOptions {
+				sensorOptions[k] = v
+			}
+		}
+
+		// Override with --opt flags if provided
+		if len(themeDevOpts) > 0 {
+			if sensorOptions == nil {
+				sensorOptions = make(map[string]interface{})
+			}
 			for _, opt := range themeDevOpts {
 				key, value, ok := strings.Cut(opt, "=")
 				if !ok {

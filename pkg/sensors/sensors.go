@@ -92,6 +92,35 @@ func (c *Config) GetStringOption(key string) (string, bool) {
 	return GetOption[string](c, key)
 }
 
+// GetStringMapOption retrieves a map[string]string option, handling JSON unmarshaling.
+func (c *Config) GetStringMapOption(key string) (map[string]string, bool) {
+	if c.Options == nil {
+		return nil, false
+	}
+	v, ok := c.Options[key]
+	if !ok {
+		return nil, false
+	}
+
+	// Direct map[string]string
+	if m, ok := v.(map[string]string); ok {
+		return m, true
+	}
+
+	// map[string]interface{} from JSON unmarshaling
+	if mi, ok := v.(map[string]interface{}); ok {
+		result := make(map[string]string, len(mi))
+		for k, val := range mi {
+			if s, ok := val.(string); ok {
+				result[k] = s
+			}
+		}
+		return result, len(result) > 0
+	}
+
+	return nil, false
+}
+
 // FormatBytes formats a byte count as a human-readable string.
 func FormatBytes(bytes float64) string {
 	units := []string{"B", "KB", "MB", "GB", "TB"}

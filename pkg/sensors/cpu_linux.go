@@ -33,8 +33,6 @@ func (p *CPUProvider) Meta() SensorMeta {
 			{Name: "Temperature", JSONName: "temperature", TSName: "temperature", Type: FieldTypeOptionalNumber, Unit: "°C", Description: "CPU temperature"},
 			{Name: "Frequency", JSONName: "frequency", TSName: "frequency", Type: FieldTypeOptionalNumber, Unit: "MHz", Description: "CPU frequency"},
 			{Name: "Cores", JSONName: "cores", TSName: "cores", Type: FieldTypeNumber, Unit: "", Description: "Number of CPU cores"},
-			{Name: "Power", JSONName: "power", TSName: "power", Type: FieldTypeOptionalNumber, Unit: "W", Description: "CPU package power"},
-			{Name: "Voltage", JSONName: "voltage", TSName: "voltage", Type: FieldTypeOptionalNumber, Unit: "V", Description: "CPU core voltage"},
 		},
 	}
 }
@@ -68,16 +66,6 @@ func (p *CPUProvider) Collect(state *CollectorState) map[string]interface{} {
 
 	// Get core count
 	result["cores"] = runtime.NumCPU()
-
-	// Get power (from RAPL or hwmon)
-	if power := p.collectPower(); power != nil {
-		result["power"] = *power
-	}
-
-	// Get voltage (from hwmon)
-	if voltage := p.collectVoltage(); voltage != nil {
-		result["voltage"] = *voltage
-	}
 
 	return result
 }
@@ -253,90 +241,4 @@ func (p *CPUProvider) collectName() string {
 	}
 
 	return "Unknown CPU"
-}
-
-func (p *CPUProvider) collectPower() *float64 {
-	// Try RAPL (Running Average Power Limit) for Intel/AMD
-	raplPaths, _ := filepath.Glob("/sys/class/powercap/intel-rapl:0/energy_uj")
-	for _, raplPath := range raplPaths {
-		// RAPL gives cumulative energy, we'd need to track delta
-		// For now, try hwmon power sensors instead
-		_ = raplPath
-	}
-
-	// Try hwmon power sensors (zenpower, k10temp with power)
-	hwmonPaths, _ := filepath.Glob("/sys/class/hwmon/hwmon*/name")
-	for _, namePath := range hwmonPaths {
-		nameBytes, err := os.ReadFile(namePath)
-		if err != nil {
-			continue
-		}
-		name := strings.TrimSpace(string(nameBytes))
-
-		// Look for CPU power sensors
-		if strings.Contains(name, "zenpower") || strings.Contains(name, "k10temp") {
-			dir := filepath.Dir(namePath)
-			powerFiles, _ := filepath.Glob(filepath.Join(dir, "power*_input"))
-			for _, powerFile := range powerFiles {
-				data, err := os.ReadFile(powerFile)
-				if err != nil {
-					continue
-				}
-				microW, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-				if err != nil {
-					continue
-				}
-				power := float64(microW) / 1000000.0
-				return &power
-			}
-		}
-	}
-
-	return nil
-}
-
-func (p *CPUProvider) collectVoltage() *float64 {
-	// Try hwmon voltage sensors
-	hwmonPaths, _ := filepath.Glob("/sys/class/hwmon/hwmon*/name")
-	for _, namePath := range hwmonPaths {
-		nameBytes, err := os.ReadFile(namePath)
-		if err != nil {
-			continue
-		}
-		name := strings.TrimSpace(string(nameBytes))
-
-		// Look for CPU voltage sensors (zenpower, nct6687, etc.)
-		if strings.Contains(name, "zenpower") || strings.Contains(name, "nct6") {
-			dir := filepath.Dir(namePath)
-
-			// Try labeled voltage inputs first
-			inLabels, _ := filepath.Glob(filepath.Join(dir, "in*_label"))
-			for _, labelPath := range inLabels {
-				labelBytes, err := os.ReadFile(labelPath)
-				if err != nil {
-					continue
-				}
-				label := strings.TrimSpace(string(labelBytes))
-
-				// Look for CPU core voltage labels
-				if strings.Contains(strings.ToLower(label), "vcore") ||
-					strings.Contains(strings.ToLower(label), "cpu") ||
-					strings.Contains(strings.ToLower(label), "svi2_core") {
-					inputPath := strings.Replace(labelPath, "_label", "_input", 1)
-					data, err := os.ReadFile(inputPath)
-					if err != nil {
-						continue
-					}
-					milliV, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-					if err != nil {
-						continue
-					}
-					voltage := float64(milliV) / 1000.0
-					return &voltage
-				}
-			}
-		}
-	}
-
-	return nil
 }
