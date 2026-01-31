@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/alperen/sensorpanel/pkg/paths"
 	"github.com/alperen/sensorpanel/pkg/sensors"
 )
 
@@ -255,14 +256,14 @@ func (d *DevServer) startSensorCollection() {
 		ShowRAM:          true,
 		ShowDisk:         true,
 		ShowNetwork:      true,
-		DiskMounts:       []string{"/"},
+		DiskMounts:       paths.DefaultDiskMounts(),
 		NetworkInterface: "*",
 		GPUMethod:        "auto",
 	}
 	d.collector = sensors.NewCollector(config)
 
 	// Prime the collector
-	d.collector.Collect()
+	d.collector.CollectAll()
 
 	go func() {
 		ticker := time.NewTicker(time.Duration(d.Interval * float64(time.Second)))
@@ -281,10 +282,9 @@ func (d *DevServer) startSensorCollection() {
 
 // broadcastSensorData sends sensor data to all connected WebSocket clients.
 func (d *DevServer) broadcastSensorData() {
-	data := d.collector.Collect()
-	jsonData := sensorDataToDevJSON(data)
+	data := d.collector.CollectAll()
 
-	msg, err := json.Marshal(jsonData)
+	msg, err := json.Marshal(data)
 	if err != nil {
 		return
 	}
@@ -331,55 +331,4 @@ func (d *DevServer) waitForVite(url string, timeout time.Duration) error {
 	}
 
 	return fmt.Errorf("timeout waiting for Vite at %s", url)
-}
-
-// sensorDataToDevJSON converts sensor data to the JSON format for dev themes.
-func sensorDataToDevJSON(data *sensors.Data) map[string]interface{} {
-	result := map[string]interface{}{
-		"cpu": map[string]interface{}{
-			"load_percent":  data.CPU.LoadPercent,
-			"temperature":   data.CPU.Temperature,
-			"frequency_mhz": data.CPU.FrequencyMHz,
-			"core_count":    data.CPU.CoreCount,
-		},
-		"gpu": map[string]interface{}{
-			"available":       data.GPU.Available,
-			"name":            data.GPU.Name,
-			"load_percent":    data.GPU.LoadPercent,
-			"temperature":     data.GPU.Temperature,
-			"memory_used_mb":  data.GPU.MemoryUsedMB,
-			"memory_total_mb": data.GPU.MemoryTotalMB,
-			"power_watts":     data.GPU.PowerWatts,
-		},
-		"memory": map[string]interface{}{
-			"total_mb":     data.Memory.TotalMB,
-			"used_mb":      data.Memory.UsedMB,
-			"available_mb": data.Memory.AvailableMB,
-			"percent":      data.Memory.Percent,
-		},
-	}
-
-	var disks []map[string]interface{}
-	for _, disk := range data.Disks {
-		disks = append(disks, map[string]interface{}{
-			"mount_point": disk.MountPoint,
-			"total_gb":    disk.TotalGB,
-			"used_gb":     disk.UsedGB,
-			"free_gb":     disk.FreeGB,
-			"percent":     disk.Percent,
-		})
-	}
-	result["disks"] = disks
-
-	var networks []map[string]interface{}
-	for _, net := range data.Networks {
-		networks = append(networks, map[string]interface{}{
-			"interface":        net.Interface,
-			"rx_bytes_per_sec": net.RxBytesPerSec,
-			"tx_bytes_per_sec": net.TxBytesPerSec,
-		})
-	}
-	result["networks"] = networks
-
-	return result
 }

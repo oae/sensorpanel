@@ -4,7 +4,6 @@ package sensors
 import (
 	"reflect"
 	"sync"
-	"time"
 )
 
 // FieldType represents the type of a sensor field for TypeScript generation.
@@ -194,19 +193,19 @@ func Register(p Provider) {
 	GlobalRegistry().Register(p)
 }
 
-// CollectorV2 collects data from all registered and enabled sensors.
-type CollectorV2 struct {
+// Collector collects data from all registered and enabled sensors.
+type Collector struct {
 	registry *Registry
 	state    *CollectorState
 	config   *Config
 }
 
-// NewCollectorV2 creates a new modular collector.
-func NewCollectorV2(config *Config) *CollectorV2 {
+// NewCollector creates a new modular collector.
+func NewCollector(config *Config) *Collector {
 	if config == nil {
 		config = DefaultConfig()
 	}
-	return &CollectorV2{
+	return &Collector{
 		registry: GlobalRegistry(),
 		state:    NewCollectorState(),
 		config:   config,
@@ -214,7 +213,7 @@ func NewCollectorV2(config *Config) *CollectorV2 {
 }
 
 // CollectAll gathers data from all available sensors.
-func (c *CollectorV2) CollectAll() map[string]interface{} {
+func (c *Collector) CollectAll() map[string]interface{} {
 	result := make(map[string]interface{})
 
 	for _, p := range c.registry.Available() {
@@ -235,7 +234,7 @@ func (c *CollectorV2) CollectAll() map[string]interface{} {
 }
 
 // CollectByID gathers data from a specific sensor.
-func (c *CollectorV2) CollectByID(id string) (map[string]interface{}, bool) {
+func (c *Collector) CollectByID(id string) (map[string]interface{}, bool) {
 	p, ok := c.registry.Get(id)
 	if !ok || !p.Available() {
 		return nil, false
@@ -244,7 +243,7 @@ func (c *CollectorV2) CollectByID(id string) (map[string]interface{}, bool) {
 }
 
 // isSensorEnabled checks if a sensor is enabled in config.
-func (c *CollectorV2) isSensorEnabled(id string) bool {
+func (c *Collector) isSensorEnabled(id string) bool {
 	// Map legacy config flags to sensor IDs
 	switch id {
 	case "cpu":
@@ -467,122 +466,4 @@ func toPascalCase(s string) string {
 	}
 
 	return result
-}
-
-// ToLegacyData converts CollectorV2 output to the legacy Data format.
-// This maintains backward compatibility with the renderer and theme JSON format.
-func (c *CollectorV2) ToLegacyData(collected map[string]interface{}) *Data {
-	data := &Data{
-		Timestamp: time.Now(),
-	}
-
-	// CPU
-	if cpuData, ok := collected["cpu"].(map[string]interface{}); ok {
-		data.CPU.LoadPercent = getFloat(cpuData, "load")
-		data.CPU.Temperature = getFloatPtr(cpuData, "temperature")
-		data.CPU.FrequencyMHz = getFloatPtr(cpuData, "frequency")
-		data.CPU.CoreCount = int(getFloat(cpuData, "cores"))
-	}
-
-	// GPU - try nvidia_gpu first, then amd_gpu
-	if gpuData, ok := collected["nvidia_gpu"].(map[string]interface{}); ok {
-		data.GPU = gpuMapToStats(gpuData)
-	} else if gpuData, ok := collected["amd_gpu"].(map[string]interface{}); ok {
-		data.GPU = gpuMapToStats(gpuData)
-	}
-
-	// Memory
-	if memData, ok := collected["memory"].(map[string]interface{}); ok {
-		data.Memory.TotalMB = getFloat(memData, "total")
-		data.Memory.UsedMB = getFloat(memData, "used")
-		data.Memory.AvailableMB = getFloat(memData, "available")
-		data.Memory.Percent = getFloat(memData, "percent")
-	}
-
-	// Disk
-	if diskData, ok := collected["disk"].(map[string]interface{}); ok {
-		if items, ok := diskData["_items"].([]interface{}); ok {
-			for _, item := range items {
-				if d, ok := item.(map[string]interface{}); ok {
-					data.Disks = append(data.Disks, DiskStats{
-						MountPoint: getString(d, "mount"),
-						TotalGB:    getFloat(d, "total"),
-						UsedGB:     getFloat(d, "used"),
-						FreeGB:     getFloat(d, "free"),
-						Percent:    getFloat(d, "percent"),
-					})
-				}
-			}
-		}
-	}
-
-	// Network
-	if netData, ok := collected["network"].(map[string]interface{}); ok {
-		if items, ok := netData["_items"].([]interface{}); ok {
-			for _, item := range items {
-				if n, ok := item.(map[string]interface{}); ok {
-					data.Networks = append(data.Networks, NetworkStats{
-						Interface:     getString(n, "interface"),
-						RxBytesPerSec: getFloat(n, "rx_rate"),
-						TxBytesPerSec: getFloat(n, "tx_rate"),
-						RxTotalBytes:  uint64(getFloat(n, "rx_total")),
-						TxTotalBytes:  uint64(getFloat(n, "tx_total")),
-					})
-				}
-			}
-		}
-	}
-
-	return data
-}
-
-func gpuMapToStats(gpuData map[string]interface{}) GPUStats {
-	return GPUStats{
-		Available:     true,
-		Name:          getString(gpuData, "name"),
-		Temperature:   getFloatPtr(gpuData, "temperature"),
-		LoadPercent:   getFloatPtr(gpuData, "load"),
-		MemoryUsedMB:  getFloatPtr(gpuData, "memory_used"),
-		MemoryTotalMB: getFloatPtr(gpuData, "memory_total"),
-		PowerWatts:    getFloatPtr(gpuData, "power"),
-	}
-}
-
-func getFloat(m map[string]interface{}, key string) float64 {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case float64:
-			return val
-		case int:
-			return float64(val)
-		case int64:
-			return float64(val)
-		case uint64:
-			return float64(val)
-		}
-	}
-	return 0
-}
-
-func getFloatPtr(m map[string]interface{}, key string) *float64 {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case float64:
-			return &val
-		case int:
-			f := float64(val)
-			return &f
-		case int64:
-			f := float64(val)
-			return &f
-		}
-	}
-	return nil
-}
-
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
 }
