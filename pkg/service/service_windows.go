@@ -57,7 +57,7 @@ func executablePath() (string, error) {
 	return filepath.Abs(exe)
 }
 
-func generateBatchFile(opts []string) (string, error) {
+func generateBatchFile(runArgs []string) (string, error) {
 	exePath, err := executablePath()
 	if err != nil {
 		return "", err
@@ -75,8 +75,8 @@ func generateBatchFile(opts []string) (string, error) {
 if not exist "%s" mkdir "%s"
 "%s" run`, logDir, logDir, exePath)
 
-	for _, opt := range opts {
-		cmd += fmt.Sprintf(` --opt "%s"`, opt)
+	for _, arg := range runArgs {
+		cmd += fmt.Sprintf(` "%s"`, arg)
 	}
 
 	cmd += fmt.Sprintf(` >> "%s" 2>&1`, logFile)
@@ -84,9 +84,9 @@ if not exist "%s" mkdir "%s"
 	return cmd, nil
 }
 
-func install(opts []string) error {
+func install(runArgs []string) error {
 	// Generate batch file
-	content, err := generateBatchFile(opts)
+	content, err := generateBatchFile(runArgs)
 	if err != nil {
 		return err
 	}
@@ -118,8 +118,8 @@ func install(opts []string) error {
 
 	exePath, _ := executablePath()
 	runCmd := fmt.Sprintf(`"%s" run`, exePath)
-	for _, opt := range opts {
-		runCmd += fmt.Sprintf(` --opt "%s"`, opt)
+	for _, arg := range runArgs {
+		runCmd += fmt.Sprintf(` "%s"`, arg)
 	}
 
 	if err := key.SetStringValue(serviceName, runCmd); err != nil {

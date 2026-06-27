@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"runtime"
+	"strconv"
 
 	"github.com/oae/sensorpanel/pkg/service"
 	"github.com/spf13/cobra"
@@ -25,11 +26,51 @@ var serviceInstallCmd = &cobra.Command{
 	Long: `Install sensorpanel to start automatically when you log in.
 
 The service will run 'sensorpanel run' with the options specified.
-Use --opt to pass sensor options to the service.`,
+Use --music, --gif, or --image to select a media mode. Use --opt to pass
+sensor options when running the normal dashboard.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts, _ := cmd.Flags().GetStringArray("opt")
+		musicMode, _ := cmd.Flags().GetBool("music")
+		gifSource, _ := cmd.Flags().GetString("gif")
+		imageSource, _ := cmd.Flags().GetString("image")
+		interval, _ := cmd.Flags().GetFloat64("interval")
+		brightness, _ := cmd.Flags().GetInt("brightness")
 
-		if err := service.Install(opts); err != nil {
+		modes := 0
+		if musicMode {
+			modes++
+		}
+		if gifSource != "" {
+			modes++
+		}
+		if imageSource != "" {
+			modes++
+		}
+		if modes > 1 {
+			return fmt.Errorf("--music, --gif, and --image cannot be used together")
+		}
+
+		var runArgs []string
+		if musicMode {
+			runArgs = append(runArgs, "--music")
+		}
+		if gifSource != "" {
+			runArgs = append(runArgs, "--gif", gifSource)
+		}
+		if imageSource != "" {
+			runArgs = append(runArgs, "--image", imageSource)
+		}
+		if cmd.Flags().Changed("interval") {
+			runArgs = append(runArgs, "--interval", strconv.FormatFloat(interval, 'f', -1, 64))
+		}
+		if cmd.Flags().Changed("brightness") {
+			runArgs = append(runArgs, "--brightness", strconv.Itoa(brightness))
+		}
+		for _, opt := range opts {
+			runArgs = append(runArgs, "--opt", opt)
+		}
+
+		if err := service.Install(runArgs); err != nil {
 			return err
 		}
 
@@ -142,6 +183,11 @@ func init() {
 
 	// Install flags
 	serviceInstallCmd.Flags().StringArrayP("opt", "o", nil, "Sensor options to pass to the service (e.g., disk.mounts=/)")
+	serviceInstallCmd.Flags().Bool("music", false, "Run the now-playing music dashboard")
+	serviceInstallCmd.Flags().String("gif", "", "Continuously play an animated GIF file or URL")
+	serviceInstallCmd.Flags().String("image", "", "Display a static PNG, JPEG, or GIF file or URL")
+	serviceInstallCmd.Flags().Float64P("interval", "i", 1.0, "Display update interval in seconds")
+	serviceInstallCmd.Flags().IntP("brightness", "b", 7, "Backlight brightness (0-7)")
 
 	// Logs flags
 	serviceLogsCmd.Flags().BoolP("follow", "f", false, "Follow log output")

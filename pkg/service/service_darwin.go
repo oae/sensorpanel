@@ -4,6 +4,7 @@ package service
 
 import (
 	"fmt"
+	"html"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +50,7 @@ func executablePath() (string, error) {
 	return filepath.Abs(exe)
 }
 
-func generatePlist(opts []string) (string, error) {
+func generatePlist(runArgs []string) (string, error) {
 	exePath, err := executablePath()
 	if err != nil {
 		return "", err
@@ -62,10 +63,10 @@ func generatePlist(opts []string) (string, error) {
 
 	// Build program arguments
 	args := fmt.Sprintf(`    <string>%s</string>
-    <string>run</string>`, exePath)
+    <string>run</string>`, html.EscapeString(exePath))
 
-	for _, opt := range opts {
-		args += fmt.Sprintf("\n    <string>--opt</string>\n    <string>%s</string>", opt)
+	for _, arg := range runArgs {
+		args += fmt.Sprintf("\n    <string>%s</string>", html.EscapeString(arg))
 	}
 
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
@@ -91,10 +92,10 @@ func generatePlist(opts []string) (string, error) {
   <string>%s</string>
 </dict>
 </plist>
-`, labelName, args, logFile, logFile), nil
+`, labelName, args, html.EscapeString(logFile), html.EscapeString(logFile)), nil
 }
 
-func install(opts []string) error {
+func install(runArgs []string) error {
 	dir, err := serviceDir()
 	if err != nil {
 		return err
@@ -106,7 +107,7 @@ func install(opts []string) error {
 	}
 
 	// Generate plist
-	content, err := generatePlist(opts)
+	content, err := generatePlist(runArgs)
 	if err != nil {
 		return err
 	}

@@ -6,15 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/oae/sensorpanel/pkg/animation"
 	"github.com/oae/sensorpanel/pkg/browser"
 	"github.com/oae/sensorpanel/pkg/config"
+	"github.com/oae/sensorpanel/pkg/music"
 	"github.com/oae/sensorpanel/pkg/panel"
 	"github.com/oae/sensorpanel/pkg/renderer"
 	"github.com/oae/sensorpanel/pkg/sensors"
@@ -28,6 +32,9 @@ var (
 	runSensors        []string
 	runExcludeSensors []string
 	runOpts           []string
+	runGIF            string
+	runImage          string
+	runMusic          bool
 )
 
 var runCmd = &cobra.Command{
@@ -38,6 +45,14 @@ on the USB display in a continuous loop.
 
 By default, all available sensors are enabled. Use --sensors to enable only
 specific sensors, or --exclude to disable specific sensors.
+
+Use --gif to play an animated GIF instead of displaying sensor data. GIF
+playback skips sensor collection and the selected theme.
+
+Use --image to display a PNG, JPEG, or GIF file or URL as a static image.
+
+Use --music for a now-playing dashboard with cover art, track and artist
+information, a song-specific progress waveform, and auto-scrolling timed lyrics.
 
 Available sensors (varies by platform):
   cpu        - CPU temperature, load, frequency
@@ -57,6 +72,10 @@ Examples:
   sensorpanel run -s cpu,memory,disk                 # Only CPU, memory, and disk
   sensorpanel run -x network                         # All except network
   sensorpanel run --opt disk.mounts=/,/home          # Monitor specific mounts
+  sensorpanel run --gif animation.gif                # Play a local GIF continuously
+  sensorpanel run --gif https://example.com/a.gif    # Play a remote GIF
+  sensorpanel run --image wallpaper.png              # Show a static image
+  sensorpanel run --music                            # Show now-playing dashboard
 
 Press Ctrl+C to stop. The backlight will be turned off on exit.`,
 	RunE: runDashboard,
@@ -65,14 +84,31 @@ Press Ctrl+C to stop. The backlight will be turned off on exit.`,
 func init() {
 	rootCmd.AddCommand(runCmd)
 
-	runCmd.Flags().Float64VarP(&runInterval, "interval", "i", 1.0, "Update interval in seconds (min 0.5)")
+	runCmd.Flags().Float64VarP(&runInterval, "interval", "i", 1.0, "Update interval in seconds (min 0.5; music min 0.25)")
 	runCmd.Flags().IntVarP(&runBrightness, "brightness", "b", 7, "Backlight brightness (0-7)")
 	runCmd.Flags().StringSliceVarP(&runSensors, "sensors", "s", nil, "Sensors to enable (e.g., cpu,memory,disk). Default: all available")
 	runCmd.Flags().StringSliceVarP(&runExcludeSensors, "exclude", "x", nil, "Sensors to exclude (e.g., network,nvidia_gpu)")
 	runCmd.Flags().StringSliceVarP(&runOpts, "opt", "o", nil, "Sensor options in key=value format (e.g., disk.mounts=/,/home)")
+	runCmd.Flags().StringVar(&runGIF, "gif", "", "Play an animated GIF file or URL instead of sensor data")
+	runCmd.Flags().StringVar(&runImage, "image", "", "Display a PNG, JPEG, or GIF file or URL instead of sensor data")
+	runCmd.Flags().BoolVar(&runMusic, "music", false, "Show now-playing music dashboard instead of sensor data")
 }
 
 func runDashboard(cmd *cobra.Command, args []string) error {
+	mediaModes := 0
+	if runGIF != "" {
+		mediaModes++
+	}
+	if runImage != "" {
+		mediaModes++
+	}
+	if runMusic {
+		mediaModes++
+	}
+	if mediaModes > 1 {
+		return fmt.Errorf("--gif, --image, and --music cannot be used together")
+	}
+
 	// Load config for defaults
 	cfg, err := config.Load()
 	if err != nil {
@@ -87,9 +123,17 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		runBrightness = cfg.Brightness
 	}
 
-	// Validate interval
-	if runInterval < 0.5 {
+	if runMusic && !cmd.Flags().Changed("interval") {
 		runInterval = 0.5
+	}
+
+	// Validate interval. Music mode uses a moderate cadence for progress updates.
+	minimumInterval := 0.5
+	if runMusic {
+		minimumInterval = 0.25
+	}
+	if runInterval < minimumInterval {
+		runInterval = minimumInterval
 	}
 
 	// Clamp brightness
@@ -113,6 +157,21 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	// Set brightness
 	if err := dev.SetBacklight(runBrightness); err != nil {
 		fmt.Printf("Warning: failed to set brightness: %v\n", err)
+	}
+
+	// Setup signal handling for graceful shutdown.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	if runGIF != "" {
+		return runGIFPlayback(dev, runGIF, sigChan)
+	}
+	if runImage != "" {
+		return runStaticImage(dev, runImage, sigChan)
+	}
+	if runMusic {
+		return runMusicDashboard(dev, sigChan)
 	}
 
 	// Configure sensors
@@ -161,10 +220,6 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	}
 	collector := sensors.NewCollector(sensorConfig)
 
-	// Setup signal handling for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	// Check if a theme is selected
 	themeName := cfg.Theme
 	if themeName != "" {
@@ -173,6 +228,124 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 
 	// No theme selected - use built-in renderer
 	return runWithBuiltinRenderer(dev, collector, sigChan)
+}
+
+func runMusicDashboard(dev *panel.Device, sigChan chan os.Signal) error {
+	if _, err := exec.LookPath("playerctl"); err != nil {
+		return fmt.Errorf("music dashboard requires playerctl: %w", err)
+	}
+	if err := ensureBrowserAvailable(); err != nil {
+		return err
+	}
+
+	dashboardDir, err := os.MkdirTemp("", "sensorpanel-music-*")
+	if err != nil {
+		return fmt.Errorf("create music dashboard: %w", err)
+	}
+	defer os.RemoveAll(dashboardDir)
+	if err := os.WriteFile(filepath.Join(dashboardDir, "index.html"), music.DashboardHTML, 0o600); err != nil {
+		return fmt.Errorf("write music dashboard: %w", err)
+	}
+
+	width, height := dev.Profile.Width(), dev.Profile.Height()
+	browserRenderer, err := browser.NewRenderer(width, height)
+	if err != nil {
+		return fmt.Errorf("initialize music dashboard browser: %w", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := browserRenderer.Start(ctx, dashboardDir); err != nil {
+		return fmt.Errorf("start music dashboard browser: %w", err)
+	}
+	defer browserRenderer.Stop()
+
+	monitor := music.NewMonitor()
+	monitor.Start(ctx)
+	fmt.Printf("Music dashboard running (%.2fs interval). Press Ctrl+C to stop.\n", runInterval)
+
+	ticker := time.NewTicker(time.Duration(runInterval * float64(time.Second)))
+	defer ticker.Stop()
+	firstFrame := true
+	for {
+		if err := renderMusicFrame(dev, monitor, browserRenderer, firstFrame); err != nil {
+			fmt.Printf("Music frame error: %v\n", err)
+		}
+		firstFrame = false
+		select {
+		case <-sigChan:
+			fmt.Println("\nStopping music dashboard...")
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func renderMusicFrame(dev *panel.Device, monitor *music.Monitor, browserRenderer *browser.Renderer, firstFrame bool) error {
+	data := map[string]interface{}{"music": monitor.Snapshot()}
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode music state: %w", err)
+	}
+	if err := browserRenderer.SendSensorData(string(jsonData)); err != nil {
+		return fmt.Errorf("update music dashboard: %w", err)
+	}
+	if firstFrame {
+		time.Sleep(150 * time.Millisecond)
+	}
+	img, err := browserRenderer.Capture()
+	if err != nil {
+		return fmt.Errorf("capture music dashboard: %w", err)
+	}
+	if err := dev.DisplayBuffer(panel.ImageToRGB565Buffer(img)); err != nil {
+		return fmt.Errorf("display music dashboard: %w", err)
+	}
+	return nil
+}
+
+// runStaticImage displays one image and keeps it on screen until interrupted.
+func runStaticImage(dev *panel.Device, source string, sigChan chan os.Signal) error {
+	img, err := animation.LoadImage(source, dev.Profile.Width(), dev.Profile.Height())
+	if err != nil {
+		return err
+	}
+
+	if err := dev.DisplayBuffer(panel.ImageToRGB565Buffer(img)); err != nil {
+		return fmt.Errorf("display image: %w", err)
+	}
+
+	fmt.Printf("Displaying image: %s. Press Ctrl+C to stop.\n", source)
+	<-sigChan
+	fmt.Println("\nStopping image display...")
+	return nil
+}
+
+// runGIFPlayback displays an animated GIF continuously at its encoded frame rate.
+func runGIFPlayback(dev *panel.Device, path string, sigChan chan os.Signal) error {
+	animation, err := animation.LoadGIF(path, dev.Profile.Width(), dev.Profile.Height())
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Playing GIF: %s (%d frames). Press Ctrl+C to stop.\n", path, len(animation.Frames))
+	frame := 0
+	for {
+		buffer := panel.ImageToRGB565Buffer(animation.Frames[frame])
+		if err := dev.DisplayBuffer(buffer); err != nil {
+			return fmt.Errorf("display GIF frame: %w", err)
+		}
+
+		timer := time.NewTimer(animation.Delays[frame])
+		select {
+		case <-sigChan:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			fmt.Println("\nStopping GIF playback...")
+			return nil
+		case <-timer.C:
+			frame = (frame + 1) % len(animation.Frames)
+		}
+	}
 }
 
 // runWithTheme runs the dashboard using a theme with headless browser rendering.

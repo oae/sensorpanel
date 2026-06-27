@@ -38,15 +38,15 @@ func executablePath() (string, error) {
 	return filepath.Abs(exe)
 }
 
-func generateServiceFile(opts []string) (string, error) {
+func generateServiceFile(runArgs []string) (string, error) {
 	exePath, err := executablePath()
 	if err != nil {
 		return "", err
 	}
 
 	execStart := exePath + " run"
-	for _, opt := range opts {
-		execStart += fmt.Sprintf(" --opt %q", opt)
+	for _, arg := range runArgs {
+		execStart += fmt.Sprintf(" %q", arg)
 	}
 
 	return fmt.Sprintf(`[Unit]
@@ -65,7 +65,7 @@ WantedBy=graphical-session.target
 `, execStart), nil
 }
 
-func install(opts []string) error {
+func install(runArgs []string) error {
 	dir, err := serviceDir()
 	if err != nil {
 		return err
@@ -77,7 +77,7 @@ func install(opts []string) error {
 	}
 
 	// Generate and write service file
-	content, err := generateServiceFile(opts)
+	content, err := generateServiceFile(runArgs)
 	if err != nil {
 		return err
 	}

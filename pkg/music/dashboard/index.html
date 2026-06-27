@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=480,height=320,initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 480px; height: 320px; margin: 0; overflow: hidden; background: #05070b; color: #f7f7fa; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    #backdrop { position: fixed; inset: -44px; background: center / cover; filter: blur(32px) saturate(1.9) contrast(1.08) brightness(1.12); opacity: .96; transform: scale(1.2); }
+    #shade { position: fixed; inset: 0; background: linear-gradient(90deg,rgba(0,0,0,.1),rgba(0,0,0,.2) 55%,rgba(0,0,0,.33)), linear-gradient(180deg,rgba(0,0,0,.16),rgba(0,0,0,.05) 42%,rgba(0,0,0,.4)); }
+    #shell { position: absolute; inset: 0; overflow: hidden; background: rgba(5,7,11,.08); }
+    #topbar { position: absolute; left: 13px; right: 13px; top: 6px; height: 23px; display: flex; align-items: center; color: #f2f2f4; font-size: 11px; letter-spacing: .02em; }
+    #note { font-size: 17px; margin-right: 7px; line-height: 1; }
+    #clock { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 11px; }
+    #empty { position: absolute; inset: 32px 0 0; display: grid; place-content: center; text-align: center; color: #999fac; font-size: 11px; }
+    #empty strong { display: block; color: white; font-size: 21px; margin-bottom: 6px; }
+    #content { display: none; }
+    #art { position: absolute; left: 13px; top: 36px; width: 103px; height: 103px; border-radius: 9px; object-fit: cover; background: #181b23; border: 1px solid rgba(255,255,255,.25); box-shadow: 0 10px 24px rgba(0,0,0,.42); }
+    #info { position: absolute; left: 130px; right: 13px; top: 35px; height: 91px; }
+    #title { font-size: 22px; line-height: 1.08; font-weight: 850; height: 48px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-shadow: 0 2px 12px rgba(0,0,0,.35); }
+    #artist { position: absolute; left: 0; right: 0; top: 56px; color: #e4e5e9; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #album { position: absolute; left: 0; right: 0; top: 76px; color: #a7abb4; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status { position: absolute; left: 13px; top: 145px; max-width: 103px; color: #d5d7dd; font-size: 9px; text-transform: capitalize; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    #progress-row { position: absolute; left: 130px; right: 13px; top: 145px; height: 12px; display: grid; grid-template-columns: 1fr 1fr; align-items: center; font-size: 9px; color: #d0d2d8; font-variant-numeric: tabular-nums; }
+    #progress { display: none; }
+    #duration { text-align: right; }
+    #divider { display: none; }
+    #lyrics-heading { position: absolute; left: 13px; top: 170px; color: #d9dbe1; font-size: 10px; font-weight: 800; letter-spacing: .25em; text-transform: uppercase; }
+    #lyrics-heading::before { content: '“'; margin-right: 6px; color: white; font-size: 15px; vertical-align: -3px; }
+    #lyrics { position: absolute; left: 9px; right: 9px; top: 186px; bottom: 4px; overflow: hidden; text-align: center; mask-image: linear-gradient(transparent,black 15%,black 85%,transparent); }
+    #lyric-track { position: absolute; width: 100%; top: 46px; }
+    .line { height: 46px; padding: 8px 8px; line-height: 23px; color: rgba(235,236,240,.5); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .line.active { color: white; font-size: 24px; line-height: 29px; font-weight: 900; text-shadow: 0 3px 14px rgba(0,0,0,.7),0 0 12px rgba(255,255,255,.22); }
+    #lyric-message { position: absolute; inset: 0; display: grid; place-items: center; color: #d0d2d8; font-size: 16px; line-height: 22px; text-shadow: 0 2px 8px black; }
+    #visualizer { position: absolute; left: 130px; right: 13px; top: 115px; height: 29px; overflow: hidden; }
+    .wave-layer { position: absolute; inset: 0; display: flex; gap: 2px; align-items: center; }
+    .bar { flex: 1; min-width: 2px; height: 25%; border-radius: 3px; background: rgba(255,255,255,.2); }
+    #wave-played { clip-path: inset(0 100% 0 0); }
+    #wave-played .bar { background: #f5f5f7; box-shadow: 0 0 4px rgba(255,255,255,.45); }
+  </style>
+</head>
+<body>
+  <div id="backdrop"></div><div id="shade"></div>
+  <main id="shell">
+    <header id="topbar"><span id="note">♫</span><span>Now Playing</span><span id="clock"></span></header>
+    <div id="empty"><div><strong>Nothing playing</strong>Start music in an MPRIS-compatible player</div></div>
+    <div id="content">
+      <img id="art" alt="Album artwork">
+      <section id="info"><div id="title"></div><div id="artist"></div><div id="album"></div></section>
+      <div id="progress-row"><div id="progress"><div id="progress-fill"></div></div><span id="elapsed">0:00</span><span id="duration">0:00</span></div>
+      <div id="status"></div><div id="visualizer"><div id="wave-base" class="wave-layer"></div><div id="wave-played" class="wave-layer"></div></div><div id="divider"></div>
+      <div id="lyrics-heading">Lyrics</div>
+      <section id="lyrics"><div id="lyric-message"></div><div id="lyric-track"></div></section>
+    </div>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const waveBase=$('wave-base'),wavePlayed=$('wave-played');
+    for (let i=0;i<48;i++) {
+      for (const layer of [waveBase,wavePlayed]) { const bar=document.createElement('div'); bar.className='bar'; layer.appendChild(bar); }
+    }
+    let lyricKey='',lyricLines=[],lastActive=-2,waveformKey='';
+    const formatTime = value => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
+    const updateClock = () => $('clock').textContent = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    updateClock(); setInterval(updateClock, 1000);
+
+    function render(data) {
+      const music = data.music;
+      const available = music && music.available;
+      $('empty').style.display = available ? 'none' : 'grid';
+      $('content').style.display = available ? 'block' : 'none';
+      if (!available) return;
+      $('status').textContent = `${music.status || 'Stopped'} · ${music.player || ''}`;
+      $('title').textContent = music.title || 'Unknown title';
+      $('artist').textContent = music.artist || 'Unknown artist';
+      $('album').textContent = music.album || '';
+      const art = music.art_url || '';
+      if ($('art').src !== art) $('art').src = art;
+      $('backdrop').style.backgroundImage = art ? `url("${art.replaceAll('"','%22')}")` : 'none';
+      const position = Math.max(0,music.position || 0), duration = Math.max(0,music.duration || 0);
+      const positionReliable = music.position_reliable !== false;
+      $('elapsed').textContent=positionReliable?formatTime(position):'--:--';
+      $('duration').textContent=positionReliable?`-${formatTime(Math.max(0,duration-position))}`:duration?formatTime(duration):'--:--';
+      const progress=duration&&positionReliable?Math.min(1,position/duration):0;
+      const waveKey=`${music.title}\0${music.artist}\0${duration}`;
+      if (waveKey!==waveformKey) { waveformKey=waveKey; createWaveform(waveKey); }
+      wavePlayed.style.clipPath=`inset(0 ${100-progress*100}% 0 0)`;
+      renderLyrics(music,position);
+    }
+    function createWaveform(key) {
+      let state=2166136261;
+      for (const char of key) { state^=char.charCodeAt(0); state=Math.imul(state,16777619); }
+      let previous=45;
+      const heights=[];
+      for (let i=0;i<48;i++) {
+        state^=state<<13; state^=state>>>17; state^=state<<5;
+        const random=(state>>>0)/4294967295;
+        const target=22+random*76;
+        previous=previous*.38+target*.62;
+        heights.push(Math.round(previous));
+      }
+      [waveBase,wavePlayed].forEach(layer => [...layer.children].forEach((bar,index) => bar.style.height=`${heights[index]}%`));
+    }
+    function renderLyrics(music,position) {
+      const key = `${music.title}\0${music.artist}\0${music.lyrics_status}`;
+      if (key !== lyricKey) {
+        lyricKey=key; lyricLines=music.lyrics || []; lastActive=-2;
+        const track=$('lyric-track'); track.replaceChildren();
+        lyricLines.forEach(line => { const el=document.createElement('div'); el.className='line'; el.textContent=line.text; track.appendChild(el); });
+        const message=$('lyric-message');
+        message.textContent=music.lyrics_status==='loading'?'Finding lyrics…':lyricLines.length?'':music.plain_lyrics?music.plain_lyrics.split('\n').filter(Boolean)[0]:'No synchronized lyrics found';
+        message.style.display=lyricLines.length?'none':'grid';
+      }
+      if (!lyricLines.length) return;
+      let active=-1; for (let i=0;i<lyricLines.length;i++) { if (position>=lyricLines[i].time) active=i; else break; }
+      if (active===lastActive) return; lastActive=active;
+      [...$('lyric-track').children].forEach((line,index) => line.classList.toggle('active',index===active));
+      $('lyric-track').style.transform=`translateY(${-Math.max(0,active)*46}px)`;
+    }
+    window.addEventListener('message',event => { if (event.data?.type==='sensorData') render(event.data.data); });
+  </script>
+</body>
+</html>

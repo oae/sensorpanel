@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* add local and remote static image display with PNG, JPEG, and GIF support
+* add animated GIF playback with timing, disposal, scaling, and transparency handling
+* add Linux MPRIS now-playing dashboard with artwork, song metadata, synchronized lyrics, and a static progress waveform
+* allow autostart services to persist music, GIF, image, interval, and brightness options
+* cache synchronized/plain lyrics and short-lived not-found responses on disk
+* disable lyric transition animations for low-refresh-rate displays
+
+### Bug Fixes
+
+* embed local MPRIS artwork files so browser-cached cover art renders in the music dashboard
+
+### Documentation
+
+* document media modes, music requirements, lyrics behavior, refresh intervals, and service configuration
+
 ## [1.1.0](https://github.com/oae/sensorpanel/compare/v1.0.2...v1.1.0) (2026-01-31)
 
 

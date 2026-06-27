@@ -11,9 +11,9 @@ type ServiceStatus struct {
 }
 
 // Install installs sensorpanel as an autostart service.
-// opts are sensor options to pass to the service (e.g., "disk.mounts=/").
-func Install(opts []string) error {
-	return install(opts)
+// runArgs are passed to the sensorpanel run command.
+func Install(runArgs []string) error {
+	return install(runArgs)
 }
 
 // Uninstall removes the sensorpanel autostart service.

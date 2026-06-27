@@ -13,6 +13,8 @@ A cross-platform CLI tool for driving USB LCD displays as real-time system monit
 - **Multi-device support** - Modular device profiles for different USB displays
 - **Easy device contribution** - Interactive wizard to add support for new panels
 - **Real-time monitoring** - CPU, GPU (NVIDIA/AMD), RAM, disk, and network stats
+- **Media display modes** - Static images, animated GIFs, and a now-playing dashboard
+- **Music dashboard** - Cover art, song metadata, progress waveform, and synchronized lyrics
 - **Dynamic sensor config** - Enable/disable sensors and configure options at runtime
 - **Web-based themes** - Create custom themes using React + TypeScript
 - **TypeScript SDK** - React hooks for easy theme development with hot reload
@@ -52,6 +54,18 @@ nix build
 ```bash
 # With built-in renderer
 ./sensorpanel run
+
+# Play an animated GIF instead of sensor data
+./sensorpanel run --gif /path/to/animation.gif
+
+# URLs are also supported
+./sensorpanel run --gif https://media.tenor.com/j8dwT9wdyc8AAAAi/evernight-anime.gif
+
+# Display a static PNG, JPEG, or GIF from a file or URL
+./sensorpanel run --image /path/to/wallpaper.png
+
+# Display the active song with artwork, progress waveform, and synchronized lyrics
+./sensorpanel run --music
 
 # With sensor options
 ./sensorpanel run --opt disk.mounts=/,/home --opt network.interface=eth*
@@ -99,7 +113,18 @@ Flags:
   -s, --sensors strings   Sensors to enable (e.g., cpu,memory,disk). Default: all
   -x, --exclude strings   Sensors to exclude (e.g., network,nvidia_gpu)
   -o, --opt strings       Sensor options (e.g., disk.mounts=/,/home)
+      --gif string        Play an animated GIF file or URL instead of sensor data
+      --image string      Display a PNG, JPEG, or GIF file or URL instead of sensor data
+      --music             Show now-playing music dashboard instead of sensor data
 ```
+
+The music dashboard currently supports Linux MPRIS players such as Spotify,
+VLC, and compatible browser players. It requires `playerctl`. Synchronized
+lyrics are loaded from LRCLIB when available.
+Lyrics are cached locally for faster reuse and fewer network requests.
+
+See [Media and Music Modes](docs/media-modes.md) for format support, layout
+behavior, requirements, lyrics behavior, and service setup.
 
 ### Sensor Options
 
@@ -172,6 +197,9 @@ sensorpanel sensor create            # Interactive wizard to create a new sensor
 ```bash
 sensorpanel service install          # Install as autostart service
 sensorpanel service install --opt disk.mounts=/  # With sensor options
+sensorpanel service install --music  # Start in now-playing mode
+sensorpanel service install --gif https://example.com/animation.gif
+sensorpanel service install --image /path/to/wallpaper.png
 sensorpanel service uninstall        # Remove autostart service
 sensorpanel service start            # Start the service now
 sensorpanel service stop             # Stop the service
@@ -184,6 +212,9 @@ Cross-platform support:
 - **Linux**: systemd user service (`~/.config/systemd/user/`)
 - **macOS**: launchd LaunchAgent (`~/Library/LaunchAgents/`)
 - **Windows**: Startup folder + Registry
+
+Re-running `service install` updates the existing service definition. Stop and
+start the service afterward to apply the new command line.
 
 ### Other Commands
 
