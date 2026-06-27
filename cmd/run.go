@@ -261,13 +261,14 @@ func runMusicDashboard(dev *panel.Device, sigChan chan os.Signal) error {
 
 	monitor := music.NewMonitor()
 	monitor.Start(ctx)
+	frameUpdater := panel.NewFrameUpdater(dev)
 	fmt.Printf("Music dashboard running (%.2fs interval). Press Ctrl+C to stop.\n", runInterval)
 
 	ticker := time.NewTicker(time.Duration(runInterval * float64(time.Second)))
 	defer ticker.Stop()
 	firstFrame := true
 	for {
-		if err := renderMusicFrame(dev, monitor, browserRenderer, firstFrame); err != nil {
+		if err := renderMusicFrame(dev, frameUpdater, monitor, browserRenderer, firstFrame); err != nil {
 			fmt.Printf("Music frame error: %v\n", err)
 		}
 		firstFrame = false
@@ -280,7 +281,7 @@ func runMusicDashboard(dev *panel.Device, sigChan chan os.Signal) error {
 	}
 }
 
-func renderMusicFrame(dev *panel.Device, monitor *music.Monitor, browserRenderer *browser.Renderer, firstFrame bool) error {
+func renderMusicFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, monitor *music.Monitor, browserRenderer *browser.Renderer, firstFrame bool) error {
 	data := map[string]interface{}{"music": monitor.Snapshot()}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -296,7 +297,7 @@ func renderMusicFrame(dev *panel.Device, monitor *music.Monitor, browserRenderer
 	if err != nil {
 		return fmt.Errorf("capture music dashboard: %w", err)
 	}
-	if err := dev.DisplayBuffer(panel.ImageToRGB565Buffer(img)); err != nil {
+	if _, err := frameUpdater.Display(dev.Profile.ConvertImage(img)); err != nil {
 		return fmt.Errorf("display music dashboard: %w", err)
 	}
 	return nil
@@ -309,7 +310,7 @@ func runStaticImage(dev *panel.Device, source string, sigChan chan os.Signal) er
 		return err
 	}
 
-	if err := dev.DisplayBuffer(panel.ImageToRGB565Buffer(img)); err != nil {
+	if err := dev.DisplayBuffer(dev.Profile.ConvertImage(img)); err != nil {
 		return fmt.Errorf("display image: %w", err)
 	}
 
@@ -327,23 +328,58 @@ func runGIFPlayback(dev *panel.Device, path string, sigChan chan os.Signal) erro
 	}
 
 	fmt.Printf("Playing GIF: %s (%d frames). Press Ctrl+C to stop.\n", path, len(animation.Frames))
+	buffers := make([][]byte, len(animation.Frames))
+	for i, image := range animation.Frames {
+		buffers[i] = dev.Profile.ConvertImage(image)
+	}
+
+	// The panel applies each regional command independently and has no frame
+	// commit/vsync operation. Keep GIF frames to one write so parts of
+	// different animation frames are not visible at the same time.
+	frameUpdater := panel.NewCoherentFrameUpdater(dev)
 	frame := 0
+	nextDeadline := time.Now()
+	started := time.Now()
+	displayedFrames := 0
+	skippedFrames := 0
+	bytesSent := 0
+	regionalWrites := 0
+	fullFrames := 0
 	for {
-		buffer := panel.ImageToRGB565Buffer(animation.Frames[frame])
-		if err := dev.DisplayBuffer(buffer); err != nil {
+		stats, err := frameUpdater.Display(buffers[frame])
+		if err != nil {
 			return fmt.Errorf("display GIF frame: %w", err)
 		}
+		displayedFrames++
+		bytesSent += stats.Bytes
+		regionalWrites += stats.Regions
+		if stats.FullFrame {
+			fullFrames++
+		}
 
-		timer := time.NewTimer(animation.Delays[frame])
+		nextDeadline = nextDeadline.Add(animation.Delays[frame])
+		nextFrame := (frame + 1) % len(animation.Frames)
+		for !nextDeadline.After(time.Now()) {
+			skippedFrames++
+			nextDeadline = nextDeadline.Add(animation.Delays[nextFrame])
+			nextFrame = (nextFrame + 1) % len(animation.Frames)
+		}
+
+		timer := time.NewTimer(time.Until(nextDeadline))
 		select {
 		case <-sigChan:
 			if !timer.Stop() {
 				<-timer.C
 			}
+			elapsed := time.Since(started)
+			fmt.Printf("\nGIF performance: %.2f FPS, %.1f KB/s, %d displayed, %d skipped, %d regional writes, %d full frames\n",
+				float64(displayedFrames)/elapsed.Seconds(),
+				float64(bytesSent)/elapsed.Seconds()/1024,
+				displayedFrames, skippedFrames, regionalWrites, fullFrames)
 			fmt.Println("\nStopping GIF playback...")
 			return nil
 		case <-timer.C:
-			frame = (frame + 1) % len(animation.Frames)
+			frame = nextFrame
 		}
 	}
 }
@@ -417,9 +453,10 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 
 	frameCount := 0
 	startTime := time.Now()
+	frameUpdater := panel.NewFrameUpdater(dev)
 
 	// Render first frame immediately
-	if err := renderThemeFrame(dev, collector, srv, browserRenderer, &frameCount); err != nil {
+	if err := renderThemeFrame(dev, frameUpdater, collector, srv, browserRenderer, &frameCount); err != nil {
 		fmt.Printf("Frame error: %v\n", err)
 	}
 
@@ -435,7 +472,7 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 			return nil
 
 		case <-ticker.C:
-			if err := renderThemeFrame(dev, collector, srv, browserRenderer, &frameCount); err != nil {
+			if err := renderThemeFrame(dev, frameUpdater, collector, srv, browserRenderer, &frameCount); err != nil {
 				fmt.Printf("Frame error: %v\n", err)
 			}
 		}
@@ -463,9 +500,10 @@ func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.Collector, sig
 
 	frameCount := 0
 	startTime := time.Now()
+	frameUpdater := panel.NewFrameUpdater(dev)
 
 	// Render first frame immediately
-	renderFrame(dev, collector, render, &frameCount)
+	renderFrame(dev, frameUpdater, collector, render, &frameCount)
 
 	for {
 		select {
@@ -479,12 +517,12 @@ func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.Collector, sig
 			return nil
 
 		case <-ticker.C:
-			renderFrame(dev, collector, render, &frameCount)
+			renderFrame(dev, frameUpdater, collector, render, &frameCount)
 		}
 	}
 }
 
-func renderFrame(dev *panel.Device, collector *sensors.Collector, render *renderer.Renderer, frameCount *int) {
+func renderFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, collector *sensors.Collector, render *renderer.Renderer, frameCount *int) {
 	// Collect sensor data
 	data := collector.CollectAll()
 
@@ -492,8 +530,8 @@ func renderFrame(dev *panel.Device, collector *sensors.Collector, render *render
 	img := render.Render(data)
 
 	// Convert to RGB565 and send to display
-	buffer := panel.ImageToRGB565Buffer(img)
-	if err := dev.DisplayBuffer(buffer); err != nil {
+	buffer := dev.Profile.ConvertImage(img)
+	if _, err := frameUpdater.Display(buffer); err != nil {
 		fmt.Printf("Display error: %v\n", err)
 		return
 	}
@@ -502,7 +540,7 @@ func renderFrame(dev *panel.Device, collector *sensors.Collector, render *render
 }
 
 // renderThemeFrame collects sensor data, broadcasts to theme, captures screenshot, and sends to display.
-func renderThemeFrame(dev *panel.Device, collector *sensors.Collector, srv *server.Server, browserRenderer *browser.Renderer, frameCount *int) error {
+func renderThemeFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, collector *sensors.Collector, srv *server.Server, browserRenderer *browser.Renderer, frameCount *int) error {
 	// Collect sensor data
 	data := collector.CollectAll()
 
@@ -531,8 +569,8 @@ func renderThemeFrame(dev *panel.Device, collector *sensors.Collector, srv *serv
 	}
 
 	// Convert to RGB565 and send to display
-	buffer := panel.ImageToRGB565Buffer(img)
-	if err := dev.DisplayBuffer(buffer); err != nil {
+	buffer := dev.Profile.ConvertImage(img)
+	if _, err := frameUpdater.Display(buffer); err != nil {
 		return fmt.Errorf("display failed: %w", err)
 	}
 

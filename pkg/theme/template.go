@@ -225,29 +225,14 @@ createRoot(rootElement).render(
 }
 
 func appTSX() string {
-	return `import { useSensorData, useConnectionStatus, formatRate } from "../lib/sensorpanel";
+	return `import { useSensorData, formatRate } from "../lib/sensorpanel";
 import "./App.css";
 
 function App() {
   const data = useSensorData();
-  const status = useConnectionStatus();
-
-  if (status === "connecting") {
-    return <div className="status">Connecting to SensorPanel...</div>;
-  }
-
-  if (status === "error" || status === "disconnected") {
-    return (
-      <div className="status error">
-        Disconnected. Retrying...
-        <br />
-        <small>Make sure 'sensorpanel theme dev' is running</small>
-      </div>
-    );
-  }
 
   if (!data) {
-    return <div className="status">Waiting for data...</div>;
+    return <div className="status" aria-label="Waiting for sensor data" />;
   }
 
   return (

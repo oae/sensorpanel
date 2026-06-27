@@ -36,6 +36,14 @@ aspect ratio, and transparent pixels are flattened onto black to prevent frame
 remnants. Remote images and GIFs have a 32 MiB download limit and a 30-second
 request timeout.
 
+GIF playback uses coherent regional updates when the display supports them:
+each logical GIF frame is sent as a single changed rectangle. This avoids
+visible tearing where parts of two different GIF frames appear at the same
+time. The tradeoff is that high-FPS full-screen GIFs are still limited by the
+USB panel bandwidth and the size of the changed area. Small or mostly-static
+GIFs benefit much more than animations where most of the screen changes every
+frame.
+
 ## Music dashboard
 
 Start the now-playing display:
@@ -106,6 +114,10 @@ seconds:
 ```bash
 sensorpanel run --music --interval 0.5
 ```
+
+Music mode uses the same regional-update pipeline as sensor dashboards. Static
+artwork and text remain stable between frames, while progress and lyric changes
+can be sent as smaller updates when the panel supports rectangular writes.
 
 ## Autostart service
 

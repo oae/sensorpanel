@@ -117,6 +117,8 @@ func (p *GenericProfile) BlitCommand(x, y, w, h int, dataLen int) []byte {
 	cmd[0] = vendorCmdPrefix // 0xCD
 	cmd[5] = subcmdBlit      // 0x06
 	cmd[6] = blitCmdWrite    // 0x12
+	binary.LittleEndian.PutUint16(cmd[7:9], uint16(x))
+	binary.LittleEndian.PutUint16(cmd[9:11], uint16(y))
 	binary.LittleEndian.PutUint16(cmd[11:13], uint16(x+w-1))
 	binary.LittleEndian.PutUint16(cmd[13:15], uint16(y+h-1))
 

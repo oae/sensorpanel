@@ -219,9 +219,10 @@ func ParseCSW(csw []byte) (uint32, byte, error) {
 //   - cmd[0] = 0xCD (vendor prefix)
 //   - cmd[5] = 0x06 (BLIT operation type)
 //   - cmd[6] = 0x12 (write image subcommand)
-//   - cmd[7-10] = 0 (reserved/unused for full-screen blit)
-//   - cmd[11-12] = width - 1 (little-endian)
-//   - cmd[13-14] = height - 1 (little-endian)
+//   - cmd[7-8] = x0 (little-endian)
+//   - cmd[9-10] = y0 (little-endian)
+//   - cmd[11-12] = x1 (little-endian)
+//   - cmd[13-14] = y1 (little-endian)
 func BuildBlitCmd(x0, y0, x1, y1 int) ([]byte, error) {
 	width := x1 - x0 + 1
 	height := y1 - y0 + 1
@@ -231,9 +232,10 @@ func BuildBlitCmd(x0, y0, x1, y1 int) ([]byte, error) {
 	cmd[0] = VendorCmdPrefix // 0xCD
 	cmd[5] = SubcmdBlit      // 0x06
 	cmd[6] = BlitCmdWrite    // 0x12
-	// cmd[7-10] = 0 for full-screen
-	binary.LittleEndian.PutUint16(cmd[11:13], uint16(x1)) // width - 1
-	binary.LittleEndian.PutUint16(cmd[13:15], uint16(y1)) // height - 1
+	binary.LittleEndian.PutUint16(cmd[7:9], uint16(x0))
+	binary.LittleEndian.PutUint16(cmd[9:11], uint16(y0))
+	binary.LittleEndian.PutUint16(cmd[11:13], uint16(x1))
+	binary.LittleEndian.PutUint16(cmd[13:15], uint16(y1))
 
 	return BuildCBW(cmd, dataLength, DirOut, 0xDEADBEEF)
 }

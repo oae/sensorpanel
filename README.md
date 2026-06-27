@@ -15,6 +15,7 @@ A cross-platform CLI tool for driving USB LCD displays as real-time system monit
 - **Real-time monitoring** - CPU, GPU (NVIDIA/AMD), RAM, disk, and network stats
 - **Media display modes** - Static images, animated GIFs, and a now-playing dashboard
 - **Music dashboard** - Cover art, song metadata, progress waveform, and synchronized lyrics
+- **Regional USB updates** - Sends only changed rectangles when the panel protocol supports it
 - **Dynamic sensor config** - Enable/disable sensors and configure options at runtime
 - **Web-based themes** - Create custom themes using React + TypeScript
 - **TypeScript SDK** - React hooks for easy theme development with hot reload
@@ -219,10 +220,42 @@ start the service afterward to apply the new command line.
 ### Other Commands
 
 ```bash
-sensorpanel benchmark          # Measure FPS performance
+sensorpanel benchmark                                      # Measure full-frame FPS
+sensorpanel benchmark --region-width 64 --region-height 32 # Measure regional FPS
+sensorpanel benchmark --animation --target-fps 60          # Test moving regional updates
 sensorpanel prune              # Remove config and cache (keeps themes)
 sensorpanel prune --all        # Also remove themes
 ```
+
+### Rendering performance
+
+SensorPanel automatically uses regional updates for run modes when the selected
+USB display supports rectangular writes. The first frame is sent as a full
+frame. Later frames are compared against the previous RGB565 buffer, unchanged
+frames are skipped, and changed pixels are grouped into cost-aware rectangular
+updates. If a regional write fails, SensorPanel falls back to full-frame writes.
+
+Regional updates help most when the layout is mostly static and only small
+areas change, such as numeric sensor values, playback progress, or a clock.
+They help least when large parts of the screen change every frame, such as
+full-screen GIF/video-style animation, large gradients, or moving backgrounds.
+
+The benchmark command can measure the real device instead of relying on theory:
+
+```bash
+# Full-frame transfer speed
+sensorpanel benchmark
+
+# Raw rectangular write speed for a centered 64x32 area
+sensorpanel benchmark --region-width 64 --region-height 32 --frames 100
+
+# End-to-end dirty-region animation test
+sensorpanel benchmark --animation --region-width 64 --region-height 32 --target-fps 60
+```
+
+On USB full-speed panels such as the QTKeJi/AIDA64 480×320 display, small
+regions can update much faster than full frames, but large full-screen changes
+are still limited by USB bandwidth and the panel's update behavior.
 
 ## Adding Device Support
 

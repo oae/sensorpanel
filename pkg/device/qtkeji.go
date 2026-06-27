@@ -115,15 +115,17 @@ func (p *QTKeJiProfile) ProtocolType() ProtocolType {
 //   - cmd[0] = 0xCD (vendor prefix)
 //   - cmd[5] = 0x06 (BLIT operation type)
 //   - cmd[6] = 0x12 (write image subcommand)
-//   - cmd[7-10] = 0 (reserved)
-//   - cmd[11-12] = width - 1 (little-endian)
-//   - cmd[13-14] = height - 1 (little-endian)
+//   - cmd[7-8] = x0 (little-endian)
+//   - cmd[9-10] = y0 (little-endian)
+//   - cmd[11-12] = x1 (little-endian)
+//   - cmd[13-14] = y1 (little-endian)
 func (p *QTKeJiProfile) BlitCommand(x, y, w, h int, dataLen int) []byte {
 	cmd := make([]byte, 16)
 	cmd[0] = vendorCmdPrefix // 0xCD
 	cmd[5] = subcmdBlit      // 0x06
 	cmd[6] = blitCmdWrite    // 0x12
-	// cmd[7-10] = 0 for full-screen
+	binary.LittleEndian.PutUint16(cmd[7:9], uint16(x))
+	binary.LittleEndian.PutUint16(cmd[9:11], uint16(y))
 	binary.LittleEndian.PutUint16(cmd[11:13], uint16(x+w-1)) // x1 = x + width - 1
 	binary.LittleEndian.PutUint16(cmd[13:15], uint16(y+h-1)) // y1 = y + height - 1
 

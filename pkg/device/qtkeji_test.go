@@ -98,7 +98,7 @@ func TestQTKeJiProfile_DisplayProperties(t *testing.T) {
 func TestQTKeJiProfile_BlitCommand(t *testing.T) {
 	p := &QTKeJiProfile{}
 
-	cmd := p.BlitCommand(0, 0, 480, 320, 480*320*2)
+	cmd := p.BlitCommand(12, 34, 56, 78, 56*78*2)
 
 	// CBW should be 31 bytes
 	if len(cmd) != 31 {
@@ -121,6 +121,19 @@ func TestQTKeJiProfile_BlitCommand(t *testing.T) {
 
 	if cmd[21] != 0x12 {
 		t.Errorf("cmd[21] = %02x, want 0x12 (write)", cmd[21])
+	}
+
+	if got := binary.LittleEndian.Uint16(cmd[22:24]); got != 12 {
+		t.Errorf("x0 = %d, want 12", got)
+	}
+	if got := binary.LittleEndian.Uint16(cmd[24:26]); got != 34 {
+		t.Errorf("y0 = %d, want 34", got)
+	}
+	if got := binary.LittleEndian.Uint16(cmd[26:28]); got != 67 {
+		t.Errorf("x1 = %d, want 67", got)
+	}
+	if got := binary.LittleEndian.Uint16(cmd[28:30]); got != 111 {
+		t.Errorf("y1 = %d, want 111", got)
 	}
 }
 

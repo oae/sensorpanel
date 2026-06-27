@@ -180,8 +180,10 @@ npm install     # or yarn, pnpm, bun
 2. **High contrast**: Use light text on dark background for readability
 3. **Large fonts**: Aim for 24px+ for values you need to read at a glance
 4. **Test on device**: Colors may look different on the LCD
-5. **Avoid animations**: They may not render smoothly at low refresh rates
-6. **Handle null values**: Sensors may not always return data
+5. **Keep unchanged areas stable**: Regional updates are fastest when only small rectangles change
+6. **Avoid full-screen animations**: They defeat regional updates and may not render smoothly on USB panels
+7. **Render nothing until data arrives**: Avoid flashing temporary connection text on the physical display
+8. **Handle null values**: Sensors may not always return data
 
 ## Example Themes
 

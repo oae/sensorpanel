@@ -263,7 +263,7 @@ func TestParseCSW(t *testing.T) {
 }
 
 func TestBuildBlitCmd(t *testing.T) {
-	cbw, err := BuildBlitCmd(0, 0, 479, 319)
+	cbw, err := BuildBlitCmd(12, 34, 67, 111)
 
 	if err != nil {
 		t.Fatalf("BuildBlitCmd() error = %v", err)
@@ -272,10 +272,10 @@ func TestBuildBlitCmd(t *testing.T) {
 		t.Errorf("CBW length = %d, want %d", len(cbw), CBWLength)
 	}
 
-	// Check data length (480 * 320 * 2 = 307200)
+	// Check data length (56 * 78 * 2 = 8736)
 	dataLen := binary.LittleEndian.Uint32(cbw[8:12])
-	if dataLen != DefaultBufferSize {
-		t.Errorf("DataLength = %d, want %d", dataLen, DefaultBufferSize)
+	if dataLen != 56*78*BytesPerPixel {
+		t.Errorf("DataLength = %d, want %d", dataLen, 56*78*BytesPerPixel)
 	}
 
 	// Check vendor command prefix
@@ -291,6 +291,19 @@ func TestBuildBlitCmd(t *testing.T) {
 	// Check subcommand
 	if cbw[21] != BlitCmdWrite {
 		t.Errorf("Command[6] = 0x%X, want 0x%X", cbw[21], BlitCmdWrite)
+	}
+
+	if got := binary.LittleEndian.Uint16(cbw[22:24]); got != 12 {
+		t.Errorf("x0 = %d, want 12", got)
+	}
+	if got := binary.LittleEndian.Uint16(cbw[24:26]); got != 34 {
+		t.Errorf("y0 = %d, want 34", got)
+	}
+	if got := binary.LittleEndian.Uint16(cbw[26:28]); got != 67 {
+		t.Errorf("x1 = %d, want 67", got)
+	}
+	if got := binary.LittleEndian.Uint16(cbw[28:30]); got != 111 {
+		t.Errorf("y1 = %d, want 111", got)
 	}
 }
 

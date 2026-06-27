@@ -1,6 +1,7 @@
 package device
 
 import (
+	"encoding/binary"
 	"image"
 	"image/color"
 	"testing"
@@ -128,7 +129,7 @@ func TestGenericProfile_DisplayProperties(t *testing.T) {
 func TestGenericProfile_BlitCommand(t *testing.T) {
 	p := NewGenericProfile(0x1234, 0x5678)
 
-	cmd := p.BlitCommand(0, 0, 480, 320, 480*320*2)
+	cmd := p.BlitCommand(12, 34, 56, 78, 56*78*2)
 
 	// CBW should be 31 bytes
 	if len(cmd) != 31 {
@@ -143,6 +144,19 @@ func TestGenericProfile_BlitCommand(t *testing.T) {
 	// Check command block
 	if cmd[15] != 0xCD {
 		t.Errorf("cmd[15] = %02x, want 0xCD (vendor prefix)", cmd[15])
+	}
+
+	if got := binary.LittleEndian.Uint16(cmd[22:24]); got != 12 {
+		t.Errorf("x0 = %d, want 12", got)
+	}
+	if got := binary.LittleEndian.Uint16(cmd[24:26]); got != 34 {
+		t.Errorf("y0 = %d, want 34", got)
+	}
+	if got := binary.LittleEndian.Uint16(cmd[26:28]); got != 67 {
+		t.Errorf("x1 = %d, want 67", got)
+	}
+	if got := binary.LittleEndian.Uint16(cmd[28:30]); got != 111 {
+		t.Errorf("y1 = %d, want 111", got)
 	}
 }
 

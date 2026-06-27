@@ -1,4 +1,4 @@
-import { useSensorData, useConnectionStatus } from "../lib/sensorpanel";
+import { useSensorData } from "../lib/sensorpanel";
 import "./App.css";
 import { useEffect, useRef, useState } from "react";
 
@@ -10,7 +10,6 @@ interface TempHistory {
 
 function App() {
   const data = useSensorData();
-  const status = useConnectionStatus();
   const [time, setTime] = useState(new Date());
   const [tempHistory, setTempHistory] = useState<TempHistory>({ cpu: [], gpu: [] });
   const maxHistoryLength = 60;
@@ -33,16 +32,8 @@ function App() {
     }));
   }, [data?.timestamp]);
 
-  if (status === "connecting") {
-    return <div className="loading">Connecting...</div>;
-  }
-
-  if (status === "error" || status === "disconnected") {
-    return <div className="loading error">Disconnected. Retrying...</div>;
-  }
-
   if (!data) {
-    return <div className="loading">Waiting for data...</div>;
+    return <div className="loading" aria-label="Waiting for sensor data" />;
   }
 
   // Prefer NVIDIA (discrete) over AMD (often integrated)

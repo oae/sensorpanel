@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oae/sensorpanel/pkg/device"
 	"github.com/google/gousb"
+	"github.com/oae/sensorpanel/pkg/device"
 )
 
 // Errors
@@ -646,6 +646,38 @@ func (d *Device) DisplayBuffer(buffer []byte) error {
 	}
 	if status != 0 {
 		return fmt.Errorf("blit failed with status %d", status)
+	}
+
+	return nil
+}
+
+// DisplayRegion sends packed pixel data to a rectangular display region.
+// The buffer must contain exactly w*h pixels in row-major order using the
+// device profile's native color format and byte order.
+func (d *Device) DisplayRegion(x, y, w, h int, buffer []byte) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.device == nil {
+		return ErrDeviceNotOpen
+	}
+	if x < 0 || y < 0 || w <= 0 || h <= 0 ||
+		x+w > d.Profile.Width() || y+h > d.Profile.Height() {
+		return fmt.Errorf("invalid display region: x=%d y=%d width=%d height=%d", x, y, w, h)
+	}
+
+	expectedSize := w * h * d.Profile.ColorFormat().BytesPerPixel()
+	if len(buffer) != expectedSize {
+		return fmt.Errorf("%w: got %d bytes, expected %d", ErrBufferSizeMismatch, len(buffer), expectedSize)
+	}
+
+	cbw := d.Profile.BlitCommand(x, y, w, h, len(buffer))
+	status, err := d.scsiCommand(cbw, buffer)
+	if err != nil {
+		return err
+	}
+	if status != 0 {
+		return fmt.Errorf("regional blit failed with status %d", status)
 	}
 
 	return nil
