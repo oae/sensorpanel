@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+
+	"github.com/oae/sensorpanel/pkg/device"
 )
 
 const (
@@ -60,16 +62,19 @@ func NewCoherentFrameUpdater(device *Device) *FrameUpdater {
 	return newDeviceFrameUpdater(device, 1)
 }
 
-func newDeviceFrameUpdater(device *Device, maxRegions int) *FrameUpdater {
+func newDeviceFrameUpdater(dev *Device, maxRegions int) *FrameUpdater {
 	updater := newFrameUpdater(
-		device,
-		device.Profile.Width(),
-		device.Profile.Height(),
-		device.Profile.ColorFormat().BytesPerPixel(),
+		dev,
+		dev.RenderWidth(),
+		dev.RenderHeight(),
+		dev.Profile.ColorFormat().BytesPerPixel(),
 		defaultDirtyTileSize,
 	)
 	updater.adaptiveTiles = true
 	updater.maxRegions = maxRegions
+	if dev.Profile.ProtocolType() != device.ProtocolSCSI {
+		updater.regionsDisabled = true
+	}
 	return updater
 }
 

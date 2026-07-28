@@ -2,15 +2,18 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"image"
+	"image/draw"
 	"sync"
 	"time"
 
 	"github.com/google/gousb"
 	"github.com/oae/sensorpanel/pkg/device"
+	"github.com/oae/sensorpanel/pkg/jpegcodec"
 )
 
 // Errors
@@ -43,9 +46,76 @@ type Device struct {
 
 	// Device profile (set automatically based on VID/PID)
 	Profile device.DeviceProfile
+	// Orientation is the physical display rotation in degrees.
+	Orientation int
+	jpegQuality int
+	jpegEncoder string
+	lyWireFrame *image.RGBA
 
 	// Device info populated on Open()
 	Info *DeviceInfo
+}
+
+// SetJPEGOptions configures the JPEG path used by LY bulk panels. encoder is
+// auto, stdlib, or turbo. Non-LY devices ignore these settings.
+func (d *Device) SetJPEGOptions(quality int, encoder string) error {
+	if quality < 1 || quality > 100 {
+		return fmt.Errorf("JPEG quality must be between 1 and 100")
+	}
+	if encoder == "" {
+		encoder = "auto"
+	}
+	if encoder != "auto" && encoder != "stdlib" && encoder != "turbo" {
+		return fmt.Errorf("JPEG encoder must be auto, stdlib, or turbo")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.jpegQuality = quality
+	d.jpegEncoder = encoder
+	return nil
+}
+
+// SetOrientation sets the physical display orientation. For LY bulk displays,
+// 90/270 swap the logical render canvas and the encoder rotates the frame back
+// into the panel's native landscape JPEG.
+func (d *Device) SetOrientation(degrees int) error {
+	normalized, err := normalizeOrientation(degrees)
+	if err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.Orientation = normalized
+	return nil
+}
+
+// RenderWidth returns the logical canvas width for the current orientation.
+func (d *Device) RenderWidth() int {
+	if d.Profile.ProtocolType() == device.ProtocolLYBulk && (d.Orientation == 90 || d.Orientation == 270) {
+		return d.Profile.Height()
+	}
+	return d.Profile.Width()
+}
+
+// RenderHeight returns the logical canvas height for the current orientation.
+func (d *Device) RenderHeight() int {
+	if d.Profile.ProtocolType() == device.ProtocolLYBulk && (d.Orientation == 90 || d.Orientation == 270) {
+		return d.Profile.Width()
+	}
+	return d.Profile.Height()
+}
+
+func normalizeOrientation(degrees int) (int, error) {
+	degrees %= 360
+	if degrees < 0 {
+		degrees += 360
+	}
+	switch degrees {
+	case 0, 90, 180, 270:
+		return degrees, nil
+	default:
+		return 0, fmt.Errorf("orientation must be one of 0, 90, 180, 270; got %d", degrees)
+	}
 }
 
 // NewDeviceWithID creates a Device targeting a specific VID/PID.
@@ -481,6 +551,14 @@ func (d *Device) Open() error {
 	// Flush any pending data
 	d.flush()
 
+	if d.Profile.ProtocolType() == device.ProtocolLYBulk {
+		if err := d.lyHandshake(); err != nil {
+			d.closeInternal()
+			return err
+		}
+		return nil
+	}
+
 	// Turn on backlight at max brightness
 	if err := d.setBacklightInternal(BacklightMax); err != nil {
 		// Not fatal, continue anyway
@@ -609,6 +687,9 @@ func (d *Device) setBacklightInternal(level int) error {
 	if d.device == nil {
 		return ErrDeviceNotOpen
 	}
+	if d.Profile.MaxBrightness() == 0 {
+		return nil
+	}
 
 	cbw := d.Profile.BacklightCommand(level)
 
@@ -633,8 +714,15 @@ func (d *Device) DisplayBuffer(buffer []byte) error {
 	}
 
 	expectedSize := d.Profile.BufferSize()
+	if d.Profile.ProtocolType() == device.ProtocolLYBulk {
+		expectedSize = d.RenderWidth() * d.RenderHeight() * d.Profile.ColorFormat().BytesPerPixel()
+	}
 	if len(buffer) != expectedSize {
 		return fmt.Errorf("%w: got %d bytes, expected %d", ErrBufferSizeMismatch, len(buffer), expectedSize)
+	}
+
+	if d.Profile.ProtocolType() == device.ProtocolLYBulk {
+		return d.displayLYBuffer(buffer)
 	}
 
 	// Build blit command using profile
@@ -651,6 +739,20 @@ func (d *Device) DisplayBuffer(buffer []byte) error {
 	return nil
 }
 
+// DisplayImage sends an image to the display. LY JPEG panels use this direct
+// RGBA path to avoid allocating an intermediate RGB888 framebuffer.
+func (d *Device) DisplayImage(img image.Image) error {
+	if d.Profile.ProtocolType() != device.ProtocolLYBulk {
+		return d.DisplayBuffer(d.Profile.ConvertImage(img))
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.device == nil {
+		return ErrDeviceNotOpen
+	}
+	return d.displayLYImage(img)
+}
+
 // DisplayRegion sends packed pixel data to a rectangular display region.
 // The buffer must contain exactly w*h pixels in row-major order using the
 // device profile's native color format and byte order.
@@ -660,6 +762,9 @@ func (d *Device) DisplayRegion(x, y, w, h int, buffer []byte) error {
 
 	if d.device == nil {
 		return ErrDeviceNotOpen
+	}
+	if d.Profile.ProtocolType() == device.ProtocolLYBulk {
+		return errors.New("regional updates are not supported by LY bulk displays")
 	}
 	if x < 0 || y < 0 || w <= 0 || h <= 0 ||
 		x+w > d.Profile.Width() || y+h > d.Profile.Height() {
@@ -685,26 +790,245 @@ func (d *Device) DisplayRegion(x, y, w, h int, buffer []byte) error {
 
 // DisplaySolidColor fills the screen with a solid color.
 func (d *Device) DisplaySolidColor(r, g, b uint8) error {
+	if d.Profile.ColorFormat() == device.RGB888 {
+		buffer := CreateSolidColorRGB888BufferWithSize(r, g, b, d.RenderWidth(), d.RenderHeight())
+		return d.DisplayBuffer(buffer)
+	}
 	buffer := CreateSolidColorBufferWithSize(r, g, b, d.Profile.Width(), d.Profile.Height())
 	return d.DisplayBuffer(buffer)
 }
 
 // DisplayTestPattern shows a 4-color quadrant test pattern.
 func (d *Device) DisplayTestPattern() error {
+	if d.Profile.ColorFormat() == device.RGB888 {
+		buffer := CreateTestPatternRGB888BufferWithSize(d.RenderWidth(), d.RenderHeight())
+		return d.DisplayBuffer(buffer)
+	}
 	buffer := CreateTestPatternBufferWithSize(d.Profile.Width(), d.Profile.Height())
 	return d.DisplayBuffer(buffer)
 }
 
 // DisplayColorBars shows an 8-color bar test pattern.
 func (d *Device) DisplayColorBars() error {
+	if d.Profile.ColorFormat() == device.RGB888 {
+		buffer := CreateColorBarsRGB888BufferWithSize(d.RenderWidth(), d.RenderHeight())
+		return d.DisplayBuffer(buffer)
+	}
 	buffer := CreateColorBarsBufferWithSize(d.Profile.Width(), d.Profile.Height())
 	return d.DisplayBuffer(buffer)
 }
 
-// DisplayImage converts and displays a Go image.
-func (d *Device) DisplayImage(img image.Image) error {
-	buffer := d.Profile.ConvertImage(img)
-	return d.DisplayBuffer(buffer)
+func (d *Device) displayLYBuffer(buffer []byte) error {
+	quality := d.jpegQuality
+	if quality == 0 {
+		quality = 80
+	}
+	encoder := d.jpegEncoder
+	if encoder == "" {
+		encoder = "auto"
+	}
+	payload, err := encodeRGB888JPEG(
+		buffer,
+		d.RenderWidth(),
+		d.RenderHeight(),
+		d.Profile.Width(),
+		d.Profile.Height(),
+		d.Orientation,
+		quality, encoder,
+	)
+	if err != nil {
+		return err
+	}
+	return d.lySend(payload)
+}
+
+func (d *Device) displayLYImage(src image.Image) error {
+	rgba, ok := src.(*image.RGBA)
+	if !ok || rgba.Bounds().Dx() != d.RenderWidth() || rgba.Bounds().Dy() != d.RenderHeight() {
+		rgba = image.NewRGBA(image.Rect(0, 0, d.RenderWidth(), d.RenderHeight()))
+		draw.Draw(rgba, rgba.Bounds(), src, src.Bounds().Min, draw.Src)
+	}
+	quality := d.jpegQuality
+	if quality == 0 {
+		quality = 80
+	}
+	encoder := d.jpegEncoder
+	if encoder == "" {
+		encoder = "auto"
+	}
+	payload, wire, err := encodeRGBAJPEG(rgba, d.Profile.Width(), d.Profile.Height(), d.Orientation, quality, encoder, d.lyWireFrame)
+	if err != nil {
+		return err
+	}
+	d.lyWireFrame = wire
+	return d.lySend(payload)
+}
+
+func encodeRGB888JPEG(buffer []byte, logicalWidth, logicalHeight, physicalWidth, physicalHeight, orientation, quality int, encoder string) ([]byte, error) {
+	expected := logicalWidth * logicalHeight * 3
+	if len(buffer) != expected {
+		return nil, fmt.Errorf("%w: got %d bytes, expected %d", ErrBufferSizeMismatch, len(buffer), expected)
+	}
+
+	// Thermalright/TRCC widescreen JPEG panels encode at a fixed native
+	// landscape resolution. TRCC uses base 180° for 1920x462 and subtracts the
+	// user orientation before JPEG encoding.
+	wireAngle := normalizeWireAngle(180 - orientation)
+	wireImg := rgb888ToRotatedRGBA(buffer, logicalWidth, logicalHeight, wireAngle)
+	if gotW, gotH := wireImg.Bounds().Dx(), wireImg.Bounds().Dy(); gotW != physicalWidth || gotH != physicalHeight {
+		return nil, fmt.Errorf("LY JPEG frame dimensions after rotation = %dx%d, expected %dx%d", gotW, gotH, physicalWidth, physicalHeight)
+	}
+
+	var encoded bytes.Buffer
+	if _, err := jpegcodec.Encode(&encoded, wireImg, quality, encoder); err != nil {
+		return nil, fmt.Errorf("encode LY JPEG frame: %w", err)
+	}
+	return encoded.Bytes(), nil
+}
+
+func encodeRGBAJPEG(src *image.RGBA, physicalWidth, physicalHeight, orientation, quality int, encoder string, reuse *image.RGBA) ([]byte, *image.RGBA, error) {
+	wireAngle := normalizeWireAngle(180 - orientation)
+	wireImg := rotateRGBAInto(src, wireAngle, reuse)
+	if gotW, gotH := wireImg.Bounds().Dx(), wireImg.Bounds().Dy(); gotW != physicalWidth || gotH != physicalHeight {
+		return nil, nil, fmt.Errorf("LY JPEG frame dimensions after rotation = %dx%d, expected %dx%d", gotW, gotH, physicalWidth, physicalHeight)
+	}
+	var encoded bytes.Buffer
+	if _, err := jpegcodec.Encode(&encoded, wireImg, quality, encoder); err != nil {
+		return nil, nil, fmt.Errorf("encode LY JPEG frame: %w", err)
+	}
+	return encoded.Bytes(), wireImg, nil
+}
+
+func rotateRGBAInto(src *image.RGBA, degrees int, reuse *image.RGBA) *image.RGBA {
+	degrees = normalizeWireAngle(degrees)
+	width, height := src.Bounds().Dx(), src.Bounds().Dy()
+	dstW, dstH := width, height
+	if degrees == 90 || degrees == 270 {
+		dstW, dstH = height, width
+	}
+	if reuse == nil || reuse.Bounds().Dx() != dstW || reuse.Bounds().Dy() != dstH {
+		reuse = image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+	}
+	for dy := 0; dy < dstH; dy++ {
+		dst := dy * reuse.Stride
+		for dx := 0; dx < dstW; dx++ {
+			var sx, sy int
+			switch degrees {
+			case 90:
+				sx, sy = dy, height-1-dx
+			case 180:
+				sx, sy = width-1-dx, height-1-dy
+			case 270:
+				sx, sy = width-1-dy, dx
+			default:
+				sx, sy = dx, dy
+			}
+			srcOffset := (sy+src.Rect.Min.Y)*src.Stride + (sx+src.Rect.Min.X)*4
+			reuse.Pix[dst], reuse.Pix[dst+1], reuse.Pix[dst+2], reuse.Pix[dst+3] = src.Pix[srcOffset], src.Pix[srcOffset+1], src.Pix[srcOffset+2], src.Pix[srcOffset+3]
+			dst += 4
+		}
+	}
+	return reuse
+}
+
+func rgb888ToRotatedRGBA(buffer []byte, width, height, degrees int) *image.RGBA {
+	degrees = normalizeWireAngle(degrees)
+	dstW, dstH := width, height
+	if degrees == 90 || degrees == 270 {
+		dstW, dstH = height, width
+	}
+	img := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+	for dy := 0; dy < dstH; dy++ {
+		dst := dy * img.Stride
+		for dx := 0; dx < dstW; dx++ {
+			var sx, sy int
+			switch degrees {
+			case 90:
+				sx = dy
+				sy = height - 1 - dx
+			case 180:
+				sx = width - 1 - dx
+				sy = height - 1 - dy
+			case 270:
+				sx = width - 1 - dy
+				sy = dx
+			default:
+				sx = dx
+				sy = dy
+			}
+			src := (sy*width + sx) * 3
+			img.Pix[dst] = buffer[src]
+			img.Pix[dst+1] = buffer[src+1]
+			img.Pix[dst+2] = buffer[src+2]
+			img.Pix[dst+3] = 0xff
+			dst += 4
+		}
+	}
+	return img
+}
+
+func rgb888ToRGBA(buffer []byte, width, height int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	src := 0
+	for y := 0; y < height; y++ {
+		dst := y * img.Stride
+		for x := 0; x < width; x++ {
+			img.Pix[dst] = buffer[src]
+			img.Pix[dst+1] = buffer[src+1]
+			img.Pix[dst+2] = buffer[src+2]
+			img.Pix[dst+3] = 0xff
+			src += 3
+			dst += 4
+		}
+	}
+	return img
+}
+
+func normalizeWireAngle(degrees int) int {
+	degrees %= 360
+	if degrees < 0 {
+		degrees += 360
+	}
+	return degrees
+}
+
+func rotateRGBA(src *image.RGBA, degrees int) *image.RGBA {
+	degrees = normalizeWireAngle(degrees)
+	if degrees == 0 {
+		dst := image.NewRGBA(src.Bounds())
+		copy(dst.Pix, src.Pix)
+		return dst
+	}
+
+	bounds := src.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	var dst *image.RGBA
+	if degrees == 90 || degrees == 270 {
+		dst = image.NewRGBA(image.Rect(0, 0, height, width))
+	} else {
+		dst = image.NewRGBA(image.Rect(0, 0, width, height))
+	}
+
+	for sy := 0; sy < height; sy++ {
+		for sx := 0; sx < width; sx++ {
+			srcOff := sy*src.Stride + sx*4
+			var dx, dy int
+			switch degrees {
+			case 90:
+				dx = height - 1 - sy
+				dy = sx
+			case 180:
+				dx = width - 1 - sx
+				dy = height - 1 - sy
+			case 270:
+				dx = sy
+				dy = width - 1 - sx
+			}
+			dstOff := dy*dst.Stride + dx*4
+			copy(dst.Pix[dstOff:dstOff+4], src.Pix[srcOff:srcOff+4])
+		}
+	}
+	return dst
 }
 
 // BacklightOn turns the backlight on at maximum brightness.

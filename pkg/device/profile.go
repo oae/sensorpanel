@@ -68,6 +68,8 @@ const (
 	ProtocolSCSI ProtocolType = iota
 	// ProtocolBulk uses raw bulk transfers.
 	ProtocolBulk
+	// ProtocolLYBulk uses the Thermalright/Winbond LY JPEG-over-bulk protocol.
+	ProtocolLYBulk
 )
 
 func (p ProtocolType) String() string {
@@ -76,6 +78,8 @@ func (p ProtocolType) String() string {
 		return "SCSI"
 	case ProtocolBulk:
 		return "Bulk"
+	case ProtocolLYBulk:
+		return "LY Bulk"
 	default:
 		return "Unknown"
 	}

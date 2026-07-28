@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strconv"
 
+	"github.com/oae/sensorpanel/pkg/config"
 	"github.com/oae/sensorpanel/pkg/service"
 	"github.com/spf13/cobra"
 )
@@ -35,6 +36,11 @@ sensor options when running the normal dashboard.`,
 		imageSource, _ := cmd.Flags().GetString("image")
 		interval, _ := cmd.Flags().GetFloat64("interval")
 		brightness, _ := cmd.Flags().GetInt("brightness")
+		orientation, _ := cmd.Flags().GetInt("orientation")
+		rendererMode, _ := cmd.Flags().GetString("renderer")
+		targetFPS, _ := cmd.Flags().GetFloat64("target-fps")
+		jpegQuality, _ := cmd.Flags().GetInt("jpeg-quality")
+		jpegEncoder, _ := cmd.Flags().GetString("jpeg-encoder")
 
 		modes := 0
 		if musicMode {
@@ -65,6 +71,24 @@ sensor options when running the normal dashboard.`,
 		}
 		if cmd.Flags().Changed("brightness") {
 			runArgs = append(runArgs, "--brightness", strconv.Itoa(brightness))
+		}
+		if cmd.Flags().Changed("orientation") {
+			runArgs = append(runArgs, "--orientation", strconv.Itoa(orientation))
+		}
+		if cmd.Flags().Changed("renderer") {
+			if _, err := config.NormalizeRenderer(rendererMode); err != nil {
+				return err
+			}
+			runArgs = append(runArgs, "--renderer", rendererMode)
+		}
+		if cmd.Flags().Changed("target-fps") {
+			runArgs = append(runArgs, "--target-fps", strconv.FormatFloat(targetFPS, 'f', -1, 64))
+		}
+		if cmd.Flags().Changed("jpeg-quality") {
+			runArgs = append(runArgs, "--jpeg-quality", strconv.Itoa(jpegQuality))
+		}
+		if cmd.Flags().Changed("jpeg-encoder") {
+			runArgs = append(runArgs, "--jpeg-encoder", jpegEncoder)
 		}
 		for _, opt := range opts {
 			runArgs = append(runArgs, "--opt", opt)
@@ -188,6 +212,11 @@ func init() {
 	serviceInstallCmd.Flags().String("image", "", "Display a static PNG, JPEG, or GIF file or URL")
 	serviceInstallCmd.Flags().Float64P("interval", "i", 1.0, "Display update interval in seconds")
 	serviceInstallCmd.Flags().IntP("brightness", "b", 7, "Backlight brightness (0-7)")
+	serviceInstallCmd.Flags().Int("orientation", 0, "Display orientation in degrees (0, 90, 180, 270)")
+	serviceInstallCmd.Flags().String("renderer", config.RendererAuto, "Theme renderer: auto, native, or chrome")
+	serviceInstallCmd.Flags().Float64("target-fps", 0, "Native theme animation target FPS (0 uses theme profile)")
+	serviceInstallCmd.Flags().Int("jpeg-quality", 0, "LY JPEG quality 1-100 (0 uses theme profile)")
+	serviceInstallCmd.Flags().String("jpeg-encoder", "auto", "LY JPEG encoder: auto, stdlib, or turbo")
 
 	// Logs flags
 	serviceLogsCmd.Flags().BoolP("follow", "f", false, "Follow log output")

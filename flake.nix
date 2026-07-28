@@ -113,6 +113,12 @@
               default = null;
               description = "Theme name (null for built-in renderer)";
             };
+
+            renderer = lib.mkOption {
+              type = lib.types.enum [ "auto" "native" "chrome" ];
+              default = "auto";
+              description = "Theme renderer mode";
+            };
             
             diskMounts = lib.mkOption {
               type = lib.types.listOf lib.types.str;
@@ -161,7 +167,7 @@
                 Type = "simple";
                 User = cfg.user;
                 Group = cfg.group;
-                ExecStart = "${cfg.package}/bin/sensorpanel run --interval ${toString cfg.interval} --brightness ${toString cfg.brightness}";
+                ExecStart = "${cfg.package}/bin/sensorpanel run --interval ${toString cfg.interval} --brightness ${toString cfg.brightness} --renderer ${cfg.renderer}";
                 Restart = "on-failure";
                 RestartSec = "5s";
                 

@@ -7,7 +7,11 @@ import (
 	"image/draw"
 	"time"
 
+	"github.com/oae/sensorpanel/pkg/device"
+	"github.com/oae/sensorpanel/pkg/nativerender"
 	"github.com/oae/sensorpanel/pkg/panel"
+	"github.com/oae/sensorpanel/pkg/sensors"
+	"github.com/oae/sensorpanel/pkg/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -27,17 +31,25 @@ The USB Full Speed (12 Mbps) connection limits maximum throughput to about
 		animation, _ := cmd.Flags().GetBool("animation")
 		duration, _ := cmd.Flags().GetDuration("duration")
 		targetFPS, _ := cmd.Flags().GetFloat64("target-fps")
+		nativeThemeName, _ := cmd.Flags().GetString("native-theme")
+		orientation, _ := cmd.Flags().GetInt("orientation")
 
 		dev, err := openConfiguredDevice()
 		if err != nil {
 			return fmt.Errorf("failed to open device: %w", err)
 		}
 		defer dev.Close()
+		if err := dev.SetOrientation(orientation); err != nil {
+			return err
+		}
 
 		fmt.Printf("Panel: %s %s\n", dev.Info.Manufacturer, dev.Info.Product)
 		fmt.Printf("Resolution: %dx%d (%d bytes/frame)\n",
 			dev.Info.Width, dev.Info.Height, dev.Info.BufferSize)
 		fmt.Printf("USB Speed: %s, Max Packet: %d bytes\n", dev.Info.Speed, dev.Info.MaxPacketSize)
+		if nativeThemeName != "" {
+			return runNativeThemeBenchmark(dev, nativeThemeName, duration, targetFPS)
+		}
 		if animation {
 			return runAnimationBenchmark(dev, regionWidth, regionHeight, duration, targetFPS)
 		}
@@ -56,13 +68,16 @@ The USB Full Speed (12 Mbps) connection limits maximum throughput to about
 		regionX := (dev.Info.Width - regionWidth) / 2
 		regionY := (dev.Info.Height - regionHeight) / 2
 		regional := regionWidth != dev.Info.Width || regionHeight != dev.Info.Height
+		if regional && dev.Profile.ProtocolType() == device.ProtocolLYBulk {
+			return fmt.Errorf("regional benchmark is not supported for %s; this protocol sends full JPEG frames", dev.Profile.Name())
+		}
 		fmt.Printf("Update area: %dx%d at (%d,%d)\n", regionWidth, regionHeight, regionX, regionY)
 		fmt.Printf("Running benchmark: %d warmup + %d measured frames\n", warmup, frames)
 		fmt.Println()
 
 		// Create alternating test patterns for benchmark
-		pattern1 := panel.CreateSolidColorBufferWithSize(255, 0, 255, regionWidth, regionHeight)
-		pattern2 := panel.CreateSolidColorBufferWithSize(0, 255, 255, regionWidth, regionHeight)
+		pattern1 := createBenchmarkColorBuffer(dev, 255, 0, 255, regionWidth, regionHeight)
+		pattern2 := createBenchmarkColorBuffer(dev, 0, 255, 255, regionWidth, regionHeight)
 		display := func(buffer []byte) error {
 			if regional {
 				return dev.DisplayRegion(regionX, regionY, regionWidth, regionHeight, buffer)
@@ -131,8 +146,14 @@ The USB Full Speed (12 Mbps) connection limits maximum throughput to about
 		efficiency := (throughputKBs / theoreticalMaxKBs) * 100
 
 		fmt.Println("=== Analysis ===")
-		fmt.Printf("Theoretical max: %.2f FPS (USB Full Speed limit)\n", theoreticalMaxFPS)
-		fmt.Printf("Efficiency:      %.1f%% of theoretical max\n", efficiency)
+		if dev.Profile.ProtocolType() == device.ProtocolLYBulk {
+			fmt.Println("LY Bulk devices send JPEG-compressed full frames.")
+			fmt.Println("Throughput above is based on native RGB input size, not USB wire bytes.")
+			fmt.Println("Use FPS and ms/frame as the primary result for this protocol.")
+		} else {
+			fmt.Printf("Theoretical max: %.2f FPS (USB Full Speed limit)\n", theoreticalMaxFPS)
+			fmt.Printf("Efficiency:      %.1f%% of theoretical max\n", efficiency)
+		}
 
 		return nil
 	},
@@ -148,6 +169,72 @@ func init() {
 	benchmarkCmd.Flags().Bool("animation", false, "Run a moving regional-update animation")
 	benchmarkCmd.Flags().Duration("duration", 10*time.Second, "Animation benchmark duration")
 	benchmarkCmd.Flags().Float64("target-fps", 60, "Animation target frame rate")
+	benchmarkCmd.Flags().String("native-theme", "", "Benchmark a native theme on the physical panel")
+	benchmarkCmd.Flags().Int("orientation", 0, "Display orientation for native-theme benchmark (0, 90, 180, 270)")
+}
+
+func runNativeThemeBenchmark(dev *panel.Device, themeName string, duration time.Duration, targetFPS float64) error {
+	t, err := theme.Load(themeName)
+	if err != nil {
+		return err
+	}
+	if !t.HasNative {
+		return fmt.Errorf("theme %q has no native.theme.json", themeName)
+	}
+	nativeTheme, err := nativerender.Load(t.NativePath())
+	if err != nil {
+		return err
+	}
+	render := nativerender.New(nativeTheme, dev.RenderWidth(), dev.RenderHeight())
+	if err := render.LoadBackgroundSequence(t.Path); err != nil {
+		return err
+	}
+	if targetFPS <= 0 {
+		targetFPS = nativeTheme.Performance.TargetFPS
+	}
+	if targetFPS <= 0 {
+		targetFPS = render.PreferredFPS()
+	}
+	if sourceFPS := render.PreferredFPS(); sourceFPS > 0 && targetFPS > sourceFPS {
+		targetFPS = sourceFPS
+	}
+	if targetFPS <= 0 {
+		return fmt.Errorf("native theme has no animation FPS; pass --target-fps")
+	}
+	if duration <= 0 {
+		return fmt.Errorf("duration must be greater than zero")
+	}
+	if err := dev.SetJPEGOptions(nativeTheme.Performance.JPEGQuality, nativeTheme.Performance.JPEGEncoder); err != nil {
+		return err
+	}
+
+	collector := sensors.NewCollector(&sensors.Config{})
+	collector.CollectAll()
+	state := &themeFrameState{}
+	frames := 0
+	started := time.Now()
+	deadline := started.Add(duration)
+	interval := time.Duration(float64(time.Second) / targetFPS)
+	next := started
+	for time.Now().Before(deadline) {
+		if err := renderNativeThemeFrame(dev, collector, render, state, &frames); err != nil {
+			return err
+		}
+		next = next.Add(interval)
+		if wait := time.Until(next); wait > 0 {
+			time.Sleep(wait)
+		}
+	}
+	elapsed := time.Since(started)
+	fps := float64(frames) / elapsed.Seconds()
+	fmt.Println("=== Native Theme Results ===")
+	fmt.Printf("Theme:       %s\n", themeName)
+	fmt.Printf("Frames:      %d\n", frames)
+	fmt.Printf("Time:        %.2f seconds\n", elapsed.Seconds())
+	fmt.Printf("Target FPS:  %.2f\n", targetFPS)
+	fmt.Printf("Measured:    %.2f FPS\n", fps)
+	fmt.Printf("JPEG:        %s/%d\n", nativeTheme.Performance.JPEGEncoder, nativeTheme.Performance.JPEGQuality)
+	return nil
 }
 
 func runAnimationBenchmark(dev *panel.Device, width, height int, duration time.Duration, targetFPS float64) error {
@@ -236,4 +323,11 @@ func drawAnimationFrame(canvas *image.RGBA, width, height, frame int) {
 			}
 		}
 	}
+}
+
+func createBenchmarkColorBuffer(dev *panel.Device, r, g, b uint8, width, height int) []byte {
+	if dev.Profile.ColorFormat().BytesPerPixel() == 3 {
+		return panel.CreateSolidColorRGB888BufferWithSize(r, g, b, width, height)
+	}
+	return panel.CreateSolidColorBufferWithSize(r, g, b, width, height)
 }

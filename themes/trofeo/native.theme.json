@@ -1,0 +1,30 @@
+{
+  "name": "Trofeo Native",
+  "layout": "trofeo_vertical_v1",
+  "width": 462,
+  "height": 1920,
+  "background": "#000000",
+  "background_sequence": {
+    "path": "assets/background",
+    "pattern": "frame_%04d.jpg",
+    "fps": 24,
+    "opacity": 1.0,
+    "cache": "lru"
+  },
+  "performance": {
+    "profile": "balanced",
+    "target_fps": 1,
+    "active_fps": 24,
+    "idle_fps": 1,
+    "idle_timeout_seconds": 20,
+    "jpeg_quality": 68,
+    "prefetch_frames": 1,
+    "jpeg_encoder": "auto"
+  },
+  "accent": "#2de2ff",
+  "accent2": "#ff4df3",
+  "text": "#f8fbff",
+  "muted": "#8ea1bb",
+  "panel": "#06132688",
+  "panel_line": "#245cff99"
+}

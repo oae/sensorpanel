@@ -23,6 +23,10 @@ import (
 const (
 	appName    = "sensorpanel"
 	configFile = "config.json"
+
+	RendererAuto   = "auto"
+	RendererNative = "native"
+	RendererChrome = "chrome"
 )
 
 // USBDevice represents a USB device identifier.
@@ -58,7 +62,8 @@ type Config struct {
 	Brightness int `json:"brightness,omitempty"` // 0-7, default 7
 
 	// Theme settings
-	Theme string `json:"theme,omitempty"` // Active theme name (empty = use built-in renderer)
+	Theme    string `json:"theme,omitempty"`    // Active theme name (empty = use built-in renderer)
+	Renderer string `json:"renderer,omitempty"` // auto, native, or chrome
 
 	// Sensor settings
 	UpdateInterval float64                `json:"update_interval,omitempty"` // seconds
@@ -71,8 +76,22 @@ func DefaultConfig() *Config {
 	return &Config{
 		// Device is intentionally empty - must be configured via 'device select'
 		Brightness:     7,
+		Renderer:       RendererAuto,
 		UpdateInterval: 1.0,
 		SensorOptions:  nil, // Let sensor providers use their defaults
+	}
+}
+
+// NormalizeRenderer validates and normalizes a renderer mode.
+func NormalizeRenderer(value string) (string, error) {
+	if value == "" {
+		return RendererAuto, nil
+	}
+	switch value {
+	case RendererAuto, RendererNative, RendererChrome:
+		return value, nil
+	default:
+		return "", fmt.Errorf("invalid renderer %q (expected auto, native, or chrome)", value)
 	}
 }
 

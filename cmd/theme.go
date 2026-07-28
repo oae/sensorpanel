@@ -4,6 +4,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"image/png"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,7 +15,9 @@ import (
 
 	"github.com/oae/sensorpanel/pkg/browser"
 	"github.com/oae/sensorpanel/pkg/config"
+	"github.com/oae/sensorpanel/pkg/nativerender"
 	"github.com/oae/sensorpanel/pkg/paths"
+	"github.com/oae/sensorpanel/pkg/sensors"
 	"github.com/oae/sensorpanel/pkg/theme"
 	"github.com/spf13/cobra"
 )
@@ -211,6 +214,62 @@ var themePathCmd = &cobra.Command{
 			return err
 		}
 		fmt.Println(themesDir)
+		return nil
+	},
+}
+
+var themeSnapshotNativeOutput string
+
+var themeSnapshotNativeCmd = &cobra.Command{
+	Use:   "snapshot-native [name]",
+	Short: "Render a native theme snapshot to PNG",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		themeName := ""
+		if len(args) > 0 {
+			themeName = args[0]
+		} else {
+			themeName, _ = config.GetTheme()
+		}
+		if themeName == "" {
+			return fmt.Errorf("no theme specified and no theme selected in config")
+		}
+		t, err := theme.Load(themeName)
+		if err != nil {
+			return err
+		}
+		if !t.HasNative {
+			return fmt.Errorf("theme %q has no native.theme.json", themeName)
+		}
+		nativeTheme, err := nativerender.Load(t.NativePath())
+		if err != nil {
+			return err
+		}
+		width, height := nativeTheme.Width, nativeTheme.Height
+		if width <= 0 {
+			width = 480
+		}
+		if height <= 0 {
+			height = 320
+		}
+		render := nativerender.New(nativeTheme, width, height)
+		if err := render.LoadBackgroundSequence(t.Path); err != nil {
+			fmt.Printf("Warning: failed to load native background sequence: %v\n", err)
+		}
+		collector := sensors.NewCollector(&sensors.Config{})
+		collector.CollectAll()
+		time.Sleep(100 * time.Millisecond)
+		img := render.Render(collector.CollectAll(), time.Now())
+
+		file, err := os.Create(themeSnapshotNativeOutput)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		if err := png.Encode(file, img); err != nil {
+			return err
+		}
+		fmt.Printf("Wrote native snapshot: %s\n", themeSnapshotNativeOutput)
 		return nil
 	},
 }
@@ -525,6 +584,7 @@ func init() {
 	themeCmd.AddCommand(themePreviewCmd)
 	themeCmd.AddCommand(themeDeleteCmd)
 	themeCmd.AddCommand(themePathCmd)
+	themeCmd.AddCommand(themeSnapshotNativeCmd)
 	themeCmd.AddCommand(themeDevCmd)
 	themeCmd.AddCommand(themeBuildCmd)
 	themeCmd.AddCommand(themeBrowserCmd)
@@ -534,6 +594,7 @@ func init() {
 	themeDevCmd.Flags().BoolVar(&themeDevNoBrowser, "no-browser", false, "Don't open browser automatically")
 	themeDevCmd.Flags().Float64VarP(&themeDevInterval, "interval", "i", 1.0, "Sensor update interval in seconds")
 	themeDevCmd.Flags().StringSliceVarP(&themeDevOpts, "opt", "o", nil, "Sensor options in key=value format (e.g., disk.mounts=/,/home)")
+	themeSnapshotNativeCmd.Flags().StringVarP(&themeSnapshotNativeOutput, "output", "o", "/tmp/sensorpanel-native-snapshot.png", "PNG output path")
 
 	themeBrowserCmd.AddCommand(themeBrowserInstallCmd)
 	themeBrowserCmd.AddCommand(themeBrowserStatusCmd)

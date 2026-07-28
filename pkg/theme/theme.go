@@ -30,11 +30,12 @@ type Metadata struct {
 
 // Theme represents an installed theme.
 type Theme struct {
-	Name     string   // Theme directory name
-	Path     string   // Full path to theme directory
-	Metadata Metadata // Parsed metadata from package.json
-	HasDist  bool     // Whether dist/index.html exists (built)
-	HasSrc   bool     // Whether src/ directory exists
+	Name      string   // Theme directory name
+	Path      string   // Full path to theme directory
+	Metadata  Metadata // Parsed metadata from package.json
+	HasDist   bool     // Whether dist/index.html exists (built)
+	HasSrc    bool     // Whether src/ directory exists
+	HasNative bool     // Whether native.theme.json exists
 }
 
 // DefaultMetadata returns default theme metadata.
@@ -137,6 +138,11 @@ func Load(name string) (*Theme, error) {
 		theme.HasSrc = true
 	}
 
+	// Check for native renderer theme
+	if _, err := os.Stat(theme.NativePath()); err == nil {
+		theme.HasNative = true
+	}
+
 	return theme, nil
 }
 
@@ -154,6 +160,11 @@ func (t *Theme) IndexPath() string {
 // DistDir returns the path to the theme's dist directory.
 func (t *Theme) DistDir() string {
 	return filepath.Join(t.Path, "dist")
+}
+
+// NativePath returns the path to the native renderer theme definition.
+func (t *Theme) NativePath() string {
+	return filepath.Join(t.Path, "native.theme.json")
 }
 
 // Delete removes a theme.

@@ -286,6 +286,14 @@ func (r *Renderer) drawProgressBar(img *image.RGBA, x, y, width, height int, per
 
 // drawText draws text using a simple 5x7 bitmap font.
 func (r *Renderer) drawText(img *image.RGBA, x, y int, text string, c color.RGBA) {
+	DrawBitmapText(img, x, y, 1, text, c)
+}
+
+// DrawBitmapText draws ASCII text using the built-in 5x7 bitmap font.
+func DrawBitmapText(img *image.RGBA, x, y, scale int, text string, c color.RGBA) {
+	if scale < 1 {
+		scale = 1
+	}
 	for _, ch := range text {
 		if ch < 32 || ch > 126 {
 			ch = '?'
@@ -294,12 +302,27 @@ func (r *Renderer) drawText(img *image.RGBA, x, y int, text string, c color.RGBA
 		for row := 0; row < 7; row++ {
 			for col := 0; col < 5; col++ {
 				if charData[row]&(1<<(4-col)) != 0 {
-					img.SetRGBA(x+col, y+row, c)
+					for sy := 0; sy < scale; sy++ {
+						for sx := 0; sx < scale; sx++ {
+							img.SetRGBA(x+col*scale+sx, y+row*scale+sy, c)
+						}
+					}
 				}
 			}
 		}
-		x += 6 // 5 pixels + 1 spacing
+		x += 6 * scale // 5 pixels + 1 spacing
 	}
+}
+
+// MeasureBitmapText returns the rendered dimensions for DrawBitmapText.
+func MeasureBitmapText(text string, scale int) (int, int) {
+	if scale < 1 {
+		scale = 1
+	}
+	if text == "" {
+		return 0, 7 * scale
+	}
+	return (len([]rune(text))*6 - 1) * scale, 7 * scale
 }
 
 // fillRect fills a rectangle with a solid color.

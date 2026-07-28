@@ -16,6 +16,7 @@ func initRegistry() {
 	registryOnce.Do(func() {
 		// Register built-in profiles
 		Register(&QTKeJiProfile{})
+		Register(&ThermalrightTrofeoProfile{})
 		// Add more built-in profiles here as they are implemented
 	})
 }

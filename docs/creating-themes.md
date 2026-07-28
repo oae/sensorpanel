@@ -1,6 +1,7 @@
 # Creating Themes
 
-Themes are React + TypeScript applications that display sensor data on the USB panel.
+Themes can be React + TypeScript applications rendered by headless Chrome, or
+native JSON themes rendered directly by SensorPanel without Chrome.
 
 ## Quick Start
 
@@ -24,6 +25,7 @@ Themes are React + TypeScript applications that display sensor data on the USB p
 ```
 my-theme/
 ├── package.json
+├── native.theme.json     # Optional native renderer theme
 ├── tsconfig.json
 ├── vite.config.ts
 ├── eslint.config.js
@@ -41,6 +43,70 @@ my-theme/
 │       └── types.ts
 └── dist/             # Built output
 ```
+
+## Renderer Modes
+
+SensorPanel supports three renderer modes for normal sensor dashboards:
+
+```bash
+sensorpanel run --renderer auto    # Native if native.theme.json exists, else Chrome
+sensorpanel run --renderer native  # Native Go renderer, no browser process
+sensorpanel run --renderer chrome  # Existing web theme renderer
+```
+
+`--renderer` does not affect GIF, image, or music modes. The music dashboard
+still uses the browser path because it depends on artwork, lyrics layout, and
+dynamic media UI code.
+
+Native themes are intended for low CPU/RAM dashboards on USB panels. They trade
+CSS/React flexibility for predictable rendering cost and fewer moving parts.
+
+### Native theme file
+
+Add `native.theme.json` to the theme directory:
+
+```json
+{
+  "name": "Trofeo Native",
+  "layout": "trofeo_vertical_v1",
+  "width": 462,
+  "height": 1920,
+  "background": "#000000",
+  "accent": "#2de2ff",
+  "accent2": "#ff4df3",
+  "text": "#f8fbff",
+  "muted": "#8ea1bb",
+  "panel": "#061326cc",
+  "panel_line": "#245cff99",
+  "performance": {
+    "profile": "balanced",
+    "target_fps": 8,
+    "active_fps": 24,
+    "idle_fps": 1,
+    "idle_timeout_seconds": 20,
+    "jpeg_quality": 78,
+    "prefetch_frames": 10,
+    "jpeg_encoder": "auto"
+  }
+}
+```
+
+`performance.profile` accepts `power-saver` (6 FPS), `balanced` (8 FPS), or
+`smooth` (12 FPS). `target_fps`, `jpeg_quality`, and `prefetch_frames` override
+the profile defaults. The native Trofeo renderer keeps a bounded prefetch cache
+instead of loading every video frame into memory. `jpeg_encoder: "auto"` uses
+libjpeg-turbo only when SensorPanel was built with `go build -tags turbojpeg`;
+otherwise it safely falls back to Go's standard JPEG encoder.
+
+On Linux, `active_fps` and `idle_fps` enable adaptive rendering from local
+keyboard and mouse events: SensorPanel uses `active_fps` while the desktop
+receives input, then switches to `idle_fps` after `idle_timeout_seconds`. This
+requires read access to `/dev/input` (normally membership in the `input`
+group); without it, SensorPanel safely remains active.
+
+Current native renderer support is intentionally small: it supports the
+Trofeo-oriented `trofeo_vertical_v1` dashboard layout and theme colors. Existing
+React themes continue to work through `--renderer chrome`.
 
 ## Using the SDK
 
@@ -184,6 +250,22 @@ npm install     # or yarn, pnpm, bun
 6. **Avoid full-screen animations**: They defeat regional updates and may not render smoothly on USB panels
 7. **Render nothing until data arrives**: Avoid flashing temporary connection text on the physical display
 8. **Handle null values**: Sensors may not always return data
+
+### Thermalright Trofeo Vision 9.16 LCD themes
+
+The Trofeo Vision 9.16 LCD uses a 1920×462 render canvas in SensorPanel. Design
+for an ultrawide strip rather than a small 480×320 grid:
+
+- Use large primary values; tinted case glass reduces perceived contrast.
+- Prefer static backgrounds and simple bars/gauges. The device receives
+  JPEG-compressed full frames, not regional RGB565 updates.
+- Avoid tiny labels at the far edges; the panel is usually viewed through a
+  side window at an angle.
+- The balanced native video profile targets 8 FPS. Full-screen video always
+  requires complete JPEG frames, so use `power-saver` when fan noise and CPU
+  use matter more than motion smoothness.
+- The included `trofeo` theme has a native JSON definition for portrait use:
+  `sensorpanel run --orientation 90 --renderer native`.
 
 ## Example Themes
 

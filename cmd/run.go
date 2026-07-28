@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/draw"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,10 +17,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/oae/sensorpanel/pkg/activity"
 	"github.com/oae/sensorpanel/pkg/animation"
 	"github.com/oae/sensorpanel/pkg/browser"
 	"github.com/oae/sensorpanel/pkg/config"
+	"github.com/oae/sensorpanel/pkg/device"
 	"github.com/oae/sensorpanel/pkg/music"
+	"github.com/oae/sensorpanel/pkg/nativerender"
 	"github.com/oae/sensorpanel/pkg/panel"
 	"github.com/oae/sensorpanel/pkg/renderer"
 	"github.com/oae/sensorpanel/pkg/sensors"
@@ -35,7 +40,14 @@ var (
 	runGIF            string
 	runImage          string
 	runMusic          bool
+	runOrientation    int
+	runRenderer       string
+	runTargetFPS      float64
+	runJPEGQuality    int
+	runJPEGEncoder    string
 )
+
+const themeSensorInterval = time.Second
 
 var runCmd = &cobra.Command{
 	Use:   "run",
@@ -76,6 +88,7 @@ Examples:
   sensorpanel run --gif https://example.com/a.gif    # Play a remote GIF
   sensorpanel run --image wallpaper.png              # Show a static image
   sensorpanel run --music                            # Show now-playing dashboard
+  sensorpanel run --renderer native                  # Render selected theme without Chrome
 
 Press Ctrl+C to stop. The backlight will be turned off on exit.`,
 	RunE: runDashboard,
@@ -92,6 +105,11 @@ func init() {
 	runCmd.Flags().StringVar(&runGIF, "gif", "", "Play an animated GIF file or URL instead of sensor data")
 	runCmd.Flags().StringVar(&runImage, "image", "", "Display a PNG, JPEG, or GIF file or URL instead of sensor data")
 	runCmd.Flags().BoolVar(&runMusic, "music", false, "Show now-playing music dashboard instead of sensor data")
+	runCmd.Flags().IntVar(&runOrientation, "orientation", 0, "Display orientation in degrees (0, 90, 180, 270)")
+	runCmd.Flags().StringVar(&runRenderer, "renderer", config.RendererAuto, "Theme renderer: auto, native, or chrome")
+	runCmd.Flags().Float64Var(&runTargetFPS, "target-fps", 0, "Native theme animation target FPS (0 uses theme profile)")
+	runCmd.Flags().IntVar(&runJPEGQuality, "jpeg-quality", 0, "LY JPEG quality 1-100 (0 uses theme profile)")
+	runCmd.Flags().StringVar(&runJPEGEncoder, "jpeg-encoder", "auto", "LY JPEG encoder: auto, stdlib, or turbo")
 }
 
 func runDashboard(cmd *cobra.Command, args []string) error {
@@ -122,18 +140,15 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	if !cmd.Flags().Changed("brightness") {
 		runBrightness = cfg.Brightness
 	}
+	if !cmd.Flags().Changed("renderer") && cfg.Renderer != "" {
+		runRenderer = cfg.Renderer
+	}
+	if runRenderer, err = config.NormalizeRenderer(runRenderer); err != nil {
+		return err
+	}
 
 	if runMusic && !cmd.Flags().Changed("interval") {
 		runInterval = 0.5
-	}
-
-	// Validate interval. Music mode uses a moderate cadence for progress updates.
-	minimumInterval := 0.5
-	if runMusic {
-		minimumInterval = 0.25
-	}
-	if runInterval < minimumInterval {
-		runInterval = minimumInterval
 	}
 
 	// Clamp brightness
@@ -151,6 +166,23 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to open device: %w", err)
 	}
 	defer dev.Close()
+	if err := dev.SetOrientation(runOrientation); err != nil {
+		return err
+	}
+
+	// Validate interval after device detection. Standard sensor panels stay at a
+	// conservative cadence; LY JPEG panels can sustain much faster full-frame
+	// updates for lightweight animated themes.
+	minimumInterval := 0.5
+	if runMusic {
+		minimumInterval = 0.25
+	}
+	if dev.Profile.ProtocolType() == device.ProtocolLYBulk {
+		minimumInterval = 1.0 / 24.0
+	}
+	if runInterval < minimumInterval {
+		runInterval = minimumInterval
+	}
 
 	fmt.Printf("Connected: %s\n", dev.Info.String())
 
@@ -247,7 +279,7 @@ func runMusicDashboard(dev *panel.Device, sigChan chan os.Signal) error {
 		return fmt.Errorf("write music dashboard: %w", err)
 	}
 
-	width, height := dev.Profile.Width(), dev.Profile.Height()
+	width, height := dev.RenderWidth(), dev.RenderHeight()
 	browserRenderer, err := browser.NewRenderer(width, height)
 	if err != nil {
 		return fmt.Errorf("initialize music dashboard browser: %w", err)
@@ -305,7 +337,7 @@ func renderMusicFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, monit
 
 // runStaticImage displays one image and keeps it on screen until interrupted.
 func runStaticImage(dev *panel.Device, source string, sigChan chan os.Signal) error {
-	img, err := animation.LoadImage(source, dev.Profile.Width(), dev.Profile.Height())
+	img, err := animation.LoadImage(source, dev.RenderWidth(), dev.RenderHeight())
 	if err != nil {
 		return err
 	}
@@ -322,7 +354,7 @@ func runStaticImage(dev *panel.Device, source string, sigChan chan os.Signal) er
 
 // runGIFPlayback displays an animated GIF continuously at its encoded frame rate.
 func runGIFPlayback(dev *panel.Device, path string, sigChan chan os.Signal) error {
-	animation, err := animation.LoadGIF(path, dev.Profile.Width(), dev.Profile.Height())
+	animation, err := animation.LoadGIF(path, dev.RenderWidth(), dev.RenderHeight())
 	if err != nil {
 		return err
 	}
@@ -369,7 +401,10 @@ func runGIFPlayback(dev *panel.Device, path string, sigChan chan os.Signal) erro
 		select {
 		case <-sigChan:
 			if !timer.Stop() {
-				<-timer.C
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 			elapsed := time.Since(started)
 			fmt.Printf("\nGIF performance: %.2f FPS, %.1f KB/s, %d displayed, %d skipped, %d regional writes, %d full frames\n",
@@ -392,17 +427,48 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 		return fmt.Errorf("failed to load theme '%s': %w", themeName, err)
 	}
 
+	mode := runRenderer
+	if mode == "" {
+		mode = cfg.Renderer
+	}
+	mode, err = config.NormalizeRenderer(mode)
+	if err != nil {
+		return err
+	}
+	if mode == config.RendererAuto {
+		if t.HasNative {
+			mode = config.RendererNative
+		} else {
+			mode = config.RendererChrome
+		}
+	}
+
+	switch mode {
+	case config.RendererNative:
+		if !t.HasNative {
+			return fmt.Errorf("theme '%s' has no native.theme.json; use --renderer chrome or add a native theme definition", themeName)
+		}
+		return runWithNativeTheme(dev, collector, t, sigChan)
+	case config.RendererChrome:
+		return runWithChromeTheme(dev, collector, t, sigChan)
+	default:
+		return fmt.Errorf("unsupported renderer %q", mode)
+	}
+}
+
+// runWithChromeTheme runs the dashboard using a theme with headless browser rendering.
+func runWithChromeTheme(dev *panel.Device, collector *sensors.Collector, t *theme.Theme, sigChan chan os.Signal) error {
 	if !t.HasDist {
-		return fmt.Errorf("theme '%s' is not built (missing dist/index.html)\nRun 'cd %s && npm install && npm run build' to build it", themeName, t.Path)
+		return fmt.Errorf("theme '%s' is not built (missing dist/index.html)\nRun 'cd %s && npm install && npm run build' to build it", t.Name, t.Path)
 	}
 
 	// Check if theme is outdated
 	if theme.IsOutdated(t.Path) {
-		fmt.Printf("Warning: Theme '%s' may be outdated (src/ is newer than dist/)\n", themeName)
-		fmt.Printf("Run 'sensorpanel theme build %s' to rebuild\n\n", themeName)
+		fmt.Printf("Warning: Theme '%s' may be outdated (src/ is newer than dist/)\n", t.Name)
+		fmt.Printf("Run 'sensorpanel theme build %s' to rebuild\n\n", t.Name)
 	}
 
-	fmt.Printf("Using theme: %s\n", themeName)
+	fmt.Printf("Using theme: %s (renderer: chrome)\n", t.Name)
 
 	// Check if browser is available, auto-download if not
 	if err := ensureBrowserAvailable(); err != nil {
@@ -419,9 +485,9 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 	fmt.Printf("Theme server running at %s\n", srv.URL())
 
 	// Use device profile dimensions, or fall back to theme metadata
-	width := dev.Profile.Width()
-	height := dev.Profile.Height()
-	if t.Metadata.Width > 0 && t.Metadata.Height > 0 {
+	width := dev.RenderWidth()
+	height := dev.RenderHeight()
+	if dev.Profile.ProtocolType() != device.ProtocolLYBulk && t.Metadata.Width > 0 && t.Metadata.Height > 0 {
 		// Theme specifies its own dimensions - use those for browser rendering
 		width = t.Metadata.Width
 		height = t.Metadata.Height
@@ -454,9 +520,10 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 	frameCount := 0
 	startTime := time.Now()
 	frameUpdater := panel.NewFrameUpdater(dev)
+	frameState := &themeFrameState{}
 
 	// Render first frame immediately
-	if err := renderThemeFrame(dev, frameUpdater, collector, srv, browserRenderer, &frameCount); err != nil {
+	if err := renderThemeFrame(dev, frameUpdater, collector, srv, browserRenderer, frameState, &frameCount); err != nil {
 		fmt.Printf("Frame error: %v\n", err)
 	}
 
@@ -472,9 +539,126 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 			return nil
 
 		case <-ticker.C:
-			if err := renderThemeFrame(dev, frameUpdater, collector, srv, browserRenderer, &frameCount); err != nil {
+			if err := renderThemeFrame(dev, frameUpdater, collector, srv, browserRenderer, frameState, &frameCount); err != nil {
 				fmt.Printf("Frame error: %v\n", err)
 			}
+		}
+	}
+}
+
+// runWithNativeTheme runs the dashboard using a native Go renderer.
+func runWithNativeTheme(dev *panel.Device, collector *sensors.Collector, t *theme.Theme, sigChan chan os.Signal) error {
+	nativeTheme, err := nativerender.Load(t.NativePath())
+	if err != nil {
+		return fmt.Errorf("failed to load native theme '%s': %w", t.Name, err)
+	}
+	render := nativerender.New(nativeTheme, dev.RenderWidth(), dev.RenderHeight())
+	if err := render.LoadBackgroundSequence(t.Path); err != nil {
+		fmt.Printf("Warning: failed to load native background sequence: %v\n", err)
+	}
+
+	targetFPS := render.PreferredFPS()
+	if nativeTheme.Performance != nil && nativeTheme.Performance.TargetFPS > 0 {
+		targetFPS = nativeTheme.Performance.TargetFPS
+	}
+	activeFPS, idleFPS := targetFPS, targetFPS
+	idleTimeout := 20 * time.Second
+	if nativeTheme.Performance != nil {
+		if nativeTheme.Performance.ActiveFPS > 0 {
+			activeFPS = nativeTheme.Performance.ActiveFPS
+		}
+		if nativeTheme.Performance.IdleFPS > 0 {
+			idleFPS = nativeTheme.Performance.IdleFPS
+		}
+		idleTimeout = time.Duration(nativeTheme.Performance.IdleTimeoutSeconds) * time.Second
+	}
+	if runTargetFPS > 0 {
+		activeFPS, idleFPS = runTargetFPS, runTargetFPS
+	}
+	if sourceFPS := render.PreferredFPS(); sourceFPS > 0 {
+		if activeFPS > sourceFPS {
+			activeFPS = sourceFPS
+		}
+		if idleFPS > sourceFPS {
+			idleFPS = sourceFPS
+		}
+	}
+	if activeFPS <= 0 {
+		activeFPS = 1
+	}
+	if idleFPS <= 0 {
+		idleFPS = activeFPS
+	}
+	jpegQuality := 80
+	jpegEncoder := runJPEGEncoder
+	if nativeTheme.Performance != nil {
+		jpegQuality = nativeTheme.Performance.JPEGQuality
+		if jpegEncoder == "auto" {
+			jpegEncoder = nativeTheme.Performance.JPEGEncoder
+		}
+	}
+	if runJPEGQuality > 0 {
+		jpegQuality = runJPEGQuality
+	}
+	if err := dev.SetJPEGOptions(jpegQuality, jpegEncoder); err != nil {
+		return err
+	}
+
+	fmt.Printf("Using theme: %s (renderer: native)\n", t.Name)
+	if frames := render.BackgroundFrameCount(); frames > 0 {
+		fmt.Printf("Native background sequence: %d frames at %.1f FPS (active %.1f, idle %.1f after %s, JPEG %s/%d)\n", frames, render.PreferredFPS(), activeFPS, idleFPS, idleTimeout, jpegEncoder, jpegQuality)
+	}
+	fmt.Printf("Dashboard running (adaptive %.1f/%.1f FPS, %.2fs sensor interval). Press Ctrl+C to stop.\n", activeFPS, idleFPS, themeSensorInterval.Seconds())
+
+	collector.CollectAll()
+	time.Sleep(100 * time.Millisecond)
+
+	frameCount := 0
+	startTime := time.Now()
+	state := &themeFrameState{}
+	activityMonitor := activity.New(time.Second)
+	defer activityMonitor.Close()
+	var idleSince time.Time
+	mode := ""
+
+	for {
+		now := time.Now()
+		idle := activityMonitor.Idle()
+		if idle {
+			if idleSince.IsZero() {
+				idleSince = now
+			}
+		} else {
+			idleSince = time.Time{}
+		}
+		fps := activeFPS
+		currentMode := "active"
+		if !idleSince.IsZero() && now.Sub(idleSince) >= idleTimeout {
+			fps = idleFPS
+			currentMode = "idle"
+		}
+		if currentMode != mode {
+			mode = currentMode
+			fmt.Printf("Native performance mode: %s (%.1f FPS)\n", mode, fps)
+		}
+		if err := renderNativeThemeFrame(dev, collector, render, state, &frameCount, currentMode == "idle"); err != nil {
+			fmt.Printf("Frame error: %v\n", err)
+		}
+		frameDelay := time.Duration(float64(time.Second) / fps)
+		timer := time.NewTimer(frameDelay)
+		select {
+		case <-sigChan:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			fmt.Println("\nShutting down...")
+			elapsed := time.Since(startTime).Seconds()
+			if elapsed > 0 {
+				fps := float64(frameCount) / elapsed
+				fmt.Printf("Rendered %d frames in %.1fs (%.2f FPS)\n", frameCount, elapsed, fps)
+			}
+			return nil
+		case <-timer.C:
 		}
 	}
 }
@@ -483,8 +667,8 @@ func runWithTheme(dev *panel.Device, collector *sensors.Collector, cfg *config.C
 func runWithBuiltinRenderer(dev *panel.Device, collector *sensors.Collector, sigChan chan os.Signal) error {
 	// Configure renderer with device profile dimensions
 	renderConfig := &renderer.Config{
-		Width:  dev.Profile.Width(),
-		Height: dev.Profile.Height(),
+		Width:  dev.RenderWidth(),
+		Height: dev.RenderHeight(),
 	}
 	render := renderer.New(renderConfig)
 
@@ -539,21 +723,33 @@ func renderFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, collector 
 	*frameCount++
 }
 
-// renderThemeFrame collects sensor data, broadcasts to theme, captures screenshot, and sends to display.
-func renderThemeFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, collector *sensors.Collector, srv *server.Server, browserRenderer *browser.Renderer, frameCount *int) error {
-	// Collect sensor data
-	data := collector.CollectAll()
+type themeFrameState struct {
+	data             map[string]interface{}
+	lastSensorUpdate time.Time
+	overlay          *image.RGBA
+	canvas           *image.RGBA
+	lowPower         *image.RGBA
+}
 
-	// Broadcast sensor data to theme via WebSocket
-	if err := srv.BroadcastSensorData(data); err != nil {
-		// Non-fatal: theme might not have connected yet
-		_ = err
-	}
+// renderThemeFrame updates sensor data at a slower cadence, then captures and sends a rendered frame.
+func renderThemeFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, collector *sensors.Collector, srv *server.Server, browserRenderer *browser.Renderer, state *themeFrameState, frameCount *int) error {
+	now := time.Now()
+	shouldUpdateSensors := state.data == nil || now.Sub(state.lastSensorUpdate) >= themeSensorInterval
+	if shouldUpdateSensors {
+		state.data = collector.CollectAll()
+		state.lastSensorUpdate = now
 
-	// Also inject via postMessage for themes that use that method
-	jsonBytes, err := json.Marshal(data)
-	if err == nil {
-		_ = browserRenderer.SendSensorData(string(jsonBytes))
+		// Broadcast sensor data to theme via WebSocket
+		if err := srv.BroadcastSensorData(state.data); err != nil {
+			// Non-fatal: theme might not have connected yet
+			_ = err
+		}
+
+		// Also inject via postMessage for themes that use that method
+		jsonBytes, err := json.Marshal(state.data)
+		if err == nil {
+			_ = browserRenderer.SendSensorData(string(jsonBytes))
+		}
 	}
 
 	// Give the theme a moment to render (if first frame)
@@ -571,6 +767,42 @@ func renderThemeFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, colle
 	// Convert to RGB565 and send to display
 	buffer := dev.Profile.ConvertImage(img)
 	if _, err := frameUpdater.Display(buffer); err != nil {
+		return fmt.Errorf("display failed: %w", err)
+	}
+
+	*frameCount++
+	return nil
+}
+
+func renderNativeThemeFrame(dev *panel.Device, collector *sensors.Collector, render *nativerender.Renderer, state *themeFrameState, frameCount *int, lowPower ...bool) error {
+	now := time.Now()
+	idleMode := len(lowPower) > 0 && lowPower[0]
+	shouldUpdateSensors := state.data == nil || now.Sub(state.lastSensorUpdate) >= themeSensorInterval
+	if shouldUpdateSensors {
+		state.data = collector.CollectAll()
+		state.lastSensorUpdate = now
+		state.overlay = render.RenderOverlay(state.data, now)
+		state.lowPower = nil
+	}
+	if idleMode {
+		if state.lowPower == nil {
+			state.lowPower = render.RenderLowPower(state.data, now)
+		}
+		if err := dev.DisplayImage(state.lowPower); err != nil {
+			return fmt.Errorf("display failed: %w", err)
+		}
+		*frameCount++
+		return nil
+	}
+
+	if state.canvas == nil {
+		state.canvas = image.NewRGBA(image.Rect(0, 0, dev.RenderWidth(), dev.RenderHeight()))
+	}
+	render.RenderBackgroundInto(state.canvas, now)
+	if state.overlay != nil {
+		draw.Draw(state.canvas, state.canvas.Bounds(), state.overlay, image.Point{}, draw.Over)
+	}
+	if err := dev.DisplayImage(state.canvas); err != nil {
 		return fmt.Errorf("display failed: %w", err)
 	}
 

@@ -458,6 +458,18 @@ func CreateSolidColorBufferWithSize(r, g, b uint8, width, height int) []byte {
 	return buffer
 }
 
+// CreateSolidColorRGB888BufferWithSize creates an RGB888 buffer filled with a single color.
+func CreateSolidColorRGB888BufferWithSize(r, g, b uint8, width, height int) []byte {
+	bufferSize := width * height * 3
+	buffer := make([]byte, bufferSize)
+	for i := 0; i < bufferSize; i += 3 {
+		buffer[i] = r
+		buffer[i+1] = g
+		buffer[i+2] = b
+	}
+	return buffer
+}
+
 // CreateTestPatternBufferWithSize creates a 4-color quadrant test pattern.
 func CreateTestPatternBufferWithSize(width, height int) []byte {
 	bufferSize := width * height * BytesPerPixel
@@ -496,6 +508,40 @@ func CreateTestPatternBufferWithSize(width, height int) []byte {
 	return buffer
 }
 
+// CreateTestPatternRGB888BufferWithSize creates a 4-color RGB888 quadrant test pattern.
+func CreateTestPatternRGB888BufferWithSize(width, height int) []byte {
+	buffer := make([]byte, width*height*3)
+
+	halfW := width / 2
+	halfH := height / 2
+
+	idx := 0
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			var r, g, b uint8
+			if y < halfH {
+				if x < halfW {
+					r = 255
+				} else {
+					g = 255
+				}
+			} else {
+				if x < halfW {
+					b = 255
+				} else {
+					r, g, b = 255, 255, 255
+				}
+			}
+			buffer[idx] = r
+			buffer[idx+1] = g
+			buffer[idx+2] = b
+			idx += 3
+		}
+	}
+
+	return buffer
+}
+
 // CreateColorBarsBufferWithSize creates a standard 8-color bar test pattern.
 func CreateColorBarsBufferWithSize(width, height int) []byte {
 	bufferSize := width * height * BytesPerPixel
@@ -526,6 +572,40 @@ func CreateColorBarsBufferWithSize(width, height int) []byte {
 		for x := 0; x < width; x++ {
 			binary.BigEndian.PutUint16(buffer[idx:idx+2], rgb565)
 			idx += 2
+		}
+	}
+
+	return buffer
+}
+
+// CreateColorBarsRGB888BufferWithSize creates a standard RGB888 8-color bar test pattern.
+func CreateColorBarsRGB888BufferWithSize(width, height int) []byte {
+	buffer := make([]byte, width*height*3)
+
+	colors := []color.RGBA{
+		{255, 255, 255, 255},
+		{255, 255, 0, 255},
+		{0, 255, 255, 255},
+		{0, 255, 0, 255},
+		{255, 0, 255, 255},
+		{255, 0, 0, 255},
+		{0, 0, 255, 255},
+		{0, 0, 0, 255},
+	}
+
+	barHeight := max(1, height/len(colors))
+	idx := 0
+	for y := 0; y < height; y++ {
+		colorIdx := y / barHeight
+		if colorIdx >= len(colors) {
+			colorIdx = len(colors) - 1
+		}
+		c := colors[colorIdx]
+		for x := 0; x < width; x++ {
+			buffer[idx] = c.R
+			buffer[idx+1] = c.G
+			buffer[idx+2] = c.B
+			idx += 3
 		}
 	}
 

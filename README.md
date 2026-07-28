@@ -17,6 +17,7 @@ A cross-platform CLI tool for driving USB LCD displays as real-time system monit
 - **Music dashboard** - Cover art, song metadata, progress waveform, and synchronized lyrics
 - **Regional USB updates** - Sends only changed rectangles when the panel protocol supports it
 - **Dynamic sensor config** - Enable/disable sensors and configure options at runtime
+- **Theme renderer selection** - Use Chrome-rendered web themes or low-overhead native JSON themes
 - **Web-based themes** - Create custom themes using React + TypeScript
 - **TypeScript SDK** - React hooks for easy theme development with hot reload
 - **Single-command dev** - One command starts everything for theme development
@@ -75,6 +76,10 @@ nix build
 ./sensorpanel theme create my-theme
 ./sensorpanel theme select my-theme
 ./sensorpanel run
+
+# Force a renderer for the selected theme
+./sensorpanel run --renderer native   # Native Go renderer, no Chrome
+./sensorpanel run --renderer chrome   # Headless Chrome renderer
 ```
 
 ### 4. (Optional) Install as autostart service
@@ -97,6 +102,7 @@ SensorPanel uses a modular device profile system. Currently supported:
 | Device | Resolution | Color Format | Notes |
 |--------|------------|--------------|-------|
 | QTKeJi/AIDA64 USB Display | 480x320 | RGB565 BE | VID 0x1908 |
+| Thermalright Trofeo Vision 9.16 LCD | 1920x462 | RGB888 → JPEG | USB high-speed LY bulk protocol, VID:PID 0416:5408 |
 | Generic AX206-based frames | Various | RGB565 | GEMBIRD, Pearl, Coby, etc. |
 
 **Don't see your device?** Run `sensorpanel device create` to add support for it!
@@ -114,10 +120,17 @@ Flags:
   -s, --sensors strings   Sensors to enable (e.g., cpu,memory,disk). Default: all
   -x, --exclude strings   Sensors to exclude (e.g., network,nvidia_gpu)
   -o, --opt strings       Sensor options (e.g., disk.mounts=/,/home)
+      --orientation int   Display orientation in degrees: 0, 90, 180, 270
+      --renderer string   Theme renderer: auto, native, or chrome (default auto)
       --gif string        Play an animated GIF file or URL instead of sensor data
       --image string      Display a PNG, JPEG, or GIF file or URL instead of sensor data
       --music             Show now-playing music dashboard instead of sensor data
 ```
+
+Renderer mode only applies to normal themed sensor dashboards. GIF, image, and
+music modes use their dedicated render paths. `auto` selects `native` when the
+selected theme has `native.theme.json`; otherwise it uses the existing Chrome
+renderer.
 
 The music dashboard currently supports Linux MPRIS players such as Spotify,
 VLC, and compatible browser players. It requires `playerctl`. Synchronized
@@ -201,6 +214,7 @@ sensorpanel service install --opt disk.mounts=/  # With sensor options
 sensorpanel service install --music  # Start in now-playing mode
 sensorpanel service install --gif https://example.com/animation.gif
 sensorpanel service install --image /path/to/wallpaper.png
+sensorpanel service install --renderer native --orientation 90
 sensorpanel service uninstall        # Remove autostart service
 sensorpanel service start            # Start the service now
 sensorpanel service stop             # Stop the service
@@ -223,6 +237,7 @@ start the service afterward to apply the new command line.
 sensorpanel benchmark                                      # Measure full-frame FPS
 sensorpanel benchmark --region-width 64 --region-height 32 # Measure regional FPS
 sensorpanel benchmark --animation --target-fps 60          # Test moving regional updates
+sensorpanel benchmark --native-theme trofeo --orientation 90 --duration 30s # Measure actual Trofeo theme FPS
 sensorpanel prune              # Remove config and cache (keeps themes)
 sensorpanel prune --all        # Also remove themes
 ```
@@ -256,6 +271,37 @@ sensorpanel benchmark --animation --region-width 64 --region-height 32 --target-
 On USB full-speed panels such as the QTKeJi/AIDA64 480×320 display, small
 regions can update much faster than full frames, but large full-screen changes
 are still limited by USB bandwidth and the panel's update behavior.
+
+Thermalright Trofeo Vision 9.16 LCD devices use a different path: SensorPanel
+renders a 1920×462 framebuffer, JPEG-encodes it, and sends it over the LY bulk
+protocol as a full frame. This panel does not support regional RGB565 updates,
+so pixel-diff rendering cannot reduce work while a full-screen video is active.
+The native path reuses its RGBA canvas, prefetches a bounded number of video
+frames, and can use libjpeg-turbo when the binary is built with
+`-tags turbojpeg`.
+
+For the Trofeo display, use the included theme. It includes both a web theme and
+a native JSON theme. The default `auto` renderer selects native mode to avoid
+running Chrome:
+
+```bash
+sensorpanel theme select trofeo
+sensorpanel run --orientation 90 --renderer native
+# Balanced video profile is 8 FPS; temporary overrides are available:
+sensorpanel run --orientation 90 --renderer native --target-fps 12 --jpeg-quality 80
+```
+
+The included Trofeo theme adapts to desktop activity on Linux: it uses 24 FPS
+while you are active, then changes to a monochrome, video-free 1 FPS dashboard
+after 20 seconds of inactivity to keep idle CPU use below the low-power target.
+It reads local keyboard/mouse events and falls back to the active cadence when
+the user cannot read `/dev/input`.
+
+On Arch Linux, install `libjpeg-turbo` and build the accelerated binary with:
+
+```bash
+go build -tags turbojpeg -o sensorpanel .
+```
 
 ## Adding Device Support
 
@@ -428,6 +474,7 @@ services.sensorpanel = {
   interval = 1.0;        # Update interval in seconds
   brightness = 7;        # Backlight brightness (0-7)
   theme = null;          # Theme name or null for built-in
+  renderer = "auto";     # auto, native, or chrome
   sensorOptions = {      # Sensor-specific options
     "disk.mounts" = [ "/" "/home" ];
     "network.interface" = "eth*";
