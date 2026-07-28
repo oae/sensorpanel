@@ -19,6 +19,20 @@
 
 * document media modes, music requirements, lyrics behavior, refresh intervals, and service configuration
 
+## [1.2.0](https://github.com/oae/sensorpanel/compare/v1.1.0...v1.2.0) (2026-07-28)
+
+
+### Features
+
+* add image, GIF, and music display modes ([7de9f78](https://github.com/oae/sensorpanel/commit/7de9f78c1063aef40c55f3d35d51976766a1c4b1))
+* add native Trofeo renderer and adaptive power mode ([10b65a8](https://github.com/oae/sensorpanel/commit/10b65a8a36c4ed91b250d07f7677f998a927f2de))
+* add regional display updates ([1a42bb6](https://github.com/oae/sensorpanel/commit/1a42bb6cd5bbc43872dae04a66998e748425ca36))
+
+
+### Performance Improvements
+
+* optimize native renderer and idle mode ([49f091c](https://github.com/oae/sensorpanel/commit/49f091c92b4768bc089df58ba2f8f7603b2e815e))
+
 ## [1.1.0](https://github.com/oae/sensorpanel/compare/v1.0.2...v1.1.0) (2026-01-31)
 
 
