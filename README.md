@@ -238,6 +238,9 @@ sensorpanel benchmark                                      # Measure full-frame 
 sensorpanel benchmark --region-width 64 --region-height 32 # Measure regional FPS
 sensorpanel benchmark --animation --target-fps 60          # Test moving regional updates
 sensorpanel benchmark --native-theme trofeo --orientation 90 --duration 30s # Measure actual Trofeo theme FPS
+sensorpanel benchmark --native-theme trofeo --orientation 90 --mode idle --duration 60s
+sensorpanel benchmark --native-theme trofeo --orientation 90 --json
+sensorpanel benchmark --native-theme trofeo --cpu-profile /tmp/sensorpanel.cpu
 sensorpanel prune              # Remove config and cache (keeps themes)
 sensorpanel prune --all        # Also remove themes
 ```
@@ -276,8 +279,12 @@ Thermalright Trofeo Vision 9.16 LCD devices use a different path: SensorPanel
 renders a 1920×462 framebuffer, JPEG-encodes it, and sends it over the LY bulk
 protocol as a full frame. This panel does not support regional RGB565 updates,
 so pixel-diff rendering cannot reduce work while a full-screen video is active.
-The native path reuses its RGBA canvas, prefetches a bounded number of video
-frames, and can use libjpeg-turbo when the binary is built with
+The native path uses a wire-oriented framebuffer: source JPEGs are rotated once
+into the SensorPanel cache (losslessly in TurboJPEG builds), decoded directly
+into a reusable physical canvas, and overlaid without rotating the complete
+frame again.
+Compressed source frames, decoded buffers, JPEG encoder state, LY packets, and
+ACK buffers are reused. Linux builds use libjpeg-turbo when compiled with
 `-tags turbojpeg`.
 
 For the Trofeo display, use the included theme. It includes both a web theme and
@@ -292,16 +299,29 @@ sensorpanel run --orientation 90 --renderer native --target-fps 12 --jpeg-qualit
 ```
 
 The included Trofeo theme adapts to desktop activity on Linux: it uses 24 FPS
-while you are active, then changes to a monochrome, video-free 1 FPS dashboard
-after 20 seconds of inactivity to keep idle CPU use below the low-power target.
-It reads local keyboard/mouse events and falls back to the active cadence when
-the user cannot read `/dev/input`.
+while you are active, then changes to a monochrome, video-free dashboard after
+20 seconds of inactivity. The monochrome frame is redrawn only when a displayed
+value or the minute changes, while its cached pixels are resent once per second
+to prevent the panel firmware from restoring the Thermalright splash screen.
+One epoll watcher reads meaningful keyboard/mouse events and falls back to the
+active cadence when the user cannot read `/dev/input`.
+
+Sensor collection is also adaptive. CPU/GPU/network values update once per
+second while active and every five seconds while idle; disk, motherboard, and
+DIMM values use slower cadences. Hardware discovery and static sysfs metadata
+are cached. NVIDIA data uses NVML directly when available and starts
+`nvidia-smi` only as a fallback.
 
 On Arch Linux, install `libjpeg-turbo` and build the accelerated binary with:
 
 ```bash
 go build -tags turbojpeg -o sensorpanel .
 ```
+
+The physical benchmark reports process CPU, delivered FPS, heap use, and
+per-stage average/p95 timings. `--cpu-profile` and `--heap-profile` produce
+standard Go pprof files. See [Native renderer performance](docs/performance.md)
+for the benchmark procedure and pipeline details.
 
 ## Adding Device Support
 

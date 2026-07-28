@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/draw"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -47,7 +46,10 @@ var (
 	runJPEGEncoder    string
 )
 
-const themeSensorInterval = time.Second
+const (
+	themeSensorInterval       = time.Second
+	nativeIdleKeepaliveWindow = 750 * time.Millisecond
+)
 
 var runCmd = &cobra.Command{
 	Use:   "run",
@@ -553,6 +555,12 @@ func runWithNativeTheme(dev *panel.Device, collector *sensors.Collector, t *them
 		return fmt.Errorf("failed to load native theme '%s': %w", t.Name, err)
 	}
 	render := nativerender.New(nativeTheme, dev.RenderWidth(), dev.RenderHeight())
+	defer render.Close()
+	if dev.Profile.ProtocolType() == device.ProtocolLYBulk {
+		if err := render.ConfigureWire(dev.Profile.Width(), dev.Profile.Height(), 180-dev.Orientation); err != nil {
+			return err
+		}
+	}
 	if err := render.LoadBackgroundSequence(t.Path); err != nil {
 		fmt.Printf("Warning: failed to load native background sequence: %v\n", err)
 	}
@@ -603,10 +611,14 @@ func runWithNativeTheme(dev *panel.Device, collector *sensors.Collector, t *them
 	if err := dev.SetJPEGOptions(jpegQuality, jpegEncoder); err != nil {
 		return err
 	}
+	effectiveJPEG, err := dev.PrepareJPEGEncoder()
+	if err != nil {
+		return err
+	}
 
 	fmt.Printf("Using theme: %s (renderer: native)\n", t.Name)
 	if frames := render.BackgroundFrameCount(); frames > 0 {
-		fmt.Printf("Native background sequence: %d frames at %.1f FPS (active %.1f, idle %.1f after %s, JPEG %s/%d)\n", frames, render.PreferredFPS(), activeFPS, idleFPS, idleTimeout, jpegEncoder, jpegQuality)
+		fmt.Printf("Native background sequence: %d frames at %.1f FPS (active %.1f, idle %.1f after %s, decode %s, JPEG %s/%d)\n", frames, render.PreferredFPS(), activeFPS, idleFPS, idleTimeout, render.BackgroundDecoder(), effectiveJPEG, jpegQuality)
 	}
 	fmt.Printf("Dashboard running (adaptive %.1f/%.1f FPS, %.2fs sensor interval). Press Ctrl+C to stop.\n", activeFPS, idleFPS, themeSensorInterval.Seconds())
 
@@ -615,13 +627,46 @@ func runWithNativeTheme(dev *panel.Device, collector *sensors.Collector, t *them
 
 	frameCount := 0
 	startTime := time.Now()
-	state := &themeFrameState{}
+	state := &themeFrameState{forceDisplay: true}
 	activityMonitor := activity.New(time.Second)
 	defer activityMonitor.Close()
 	var idleSince time.Time
 	mode := ""
+	nextFrame := time.Now()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	resetTimer := func(deadline time.Time) {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		wait := time.Until(deadline)
+		if wait < 0 {
+			wait = 0
+		}
+		timer.Reset(wait)
+	}
 
 	for {
+		select {
+		case <-sigChan:
+			fmt.Println("\nShutting down...")
+			elapsed := time.Since(startTime).Seconds()
+			if elapsed > 0 {
+				fps := float64(frameCount) / elapsed
+				fmt.Printf("Presented %d frames in %.1fs (%.2f FPS)\n", frameCount, elapsed, fps)
+			}
+			return nil
+		case <-activityMonitor.Events():
+			idleSince = time.Time{}
+			state.forceDisplay = true
+			nextFrame = time.Now()
+			resetTimer(nextFrame)
+		case <-timer.C:
+		}
+
 		now := time.Now()
 		idle := activityMonitor.Idle()
 		if idle {
@@ -639,27 +684,20 @@ func runWithNativeTheme(dev *panel.Device, collector *sensors.Collector, t *them
 		}
 		if currentMode != mode {
 			mode = currentMode
+			state.forceDisplay = true
 			fmt.Printf("Native performance mode: %s (%.1f FPS)\n", mode, fps)
 		}
-		if err := renderNativeThemeFrame(dev, collector, render, state, &frameCount, currentMode == "idle"); err != nil {
+		if _, err := renderNativeThemeFrame(dev, collector, render, state, &frameCount, currentMode == "idle"); err != nil {
 			fmt.Printf("Frame error: %v\n", err)
 		}
 		frameDelay := time.Duration(float64(time.Second) / fps)
-		timer := time.NewTimer(frameDelay)
-		select {
-		case <-sigChan:
-			if !timer.Stop() {
-				<-timer.C
-			}
-			fmt.Println("\nShutting down...")
-			elapsed := time.Since(startTime).Seconds()
-			if elapsed > 0 {
-				fps := float64(frameCount) / elapsed
-				fmt.Printf("Rendered %d frames in %.1fs (%.2f FPS)\n", frameCount, elapsed, fps)
-			}
-			return nil
-		case <-timer.C:
+		nextFrame = nextFrame.Add(frameDelay)
+		finished := time.Now()
+		if nextFrame.Before(finished) {
+			missed := finished.Sub(nextFrame)/frameDelay + 1
+			nextFrame = nextFrame.Add(missed * frameDelay)
 		}
+		resetTimer(nextFrame)
 	}
 }
 
@@ -724,11 +762,29 @@ func renderFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, collector 
 }
 
 type themeFrameState struct {
-	data             map[string]interface{}
-	lastSensorUpdate time.Time
-	overlay          *image.RGBA
-	canvas           *image.RGBA
-	lowPower         *image.RGBA
+	data              map[string]interface{}
+	lastSensorUpdate  time.Time
+	overlay           *image.RGBA
+	canvas            *image.RGBA
+	lowPower          *image.RGBA
+	overlaySignature  string
+	lowPowerSignature string
+	viewSignature     string
+	signatureMinute   int
+	lastIdleSent      time.Time
+	idleMode          bool
+	forceDisplay      bool
+	lastTiming        nativeFrameTiming
+}
+
+type nativeFrameTiming struct {
+	Sensor     time.Duration
+	Overlay    time.Duration
+	Background time.Duration
+	Composite  time.Duration
+	Display    panel.DisplayMetrics
+	Total      time.Duration
+	Skipped    bool
 }
 
 // renderThemeFrame updates sensor data at a slower cadence, then captures and sends a rendered frame.
@@ -774,40 +830,108 @@ func renderThemeFrame(dev *panel.Device, frameUpdater *panel.FrameUpdater, colle
 	return nil
 }
 
-func renderNativeThemeFrame(dev *panel.Device, collector *sensors.Collector, render *nativerender.Renderer, state *themeFrameState, frameCount *int, lowPower ...bool) error {
+func renderNativeThemeFrame(dev *panel.Device, collector *sensors.Collector, render *nativerender.Renderer, state *themeFrameState, frameCount *int, lowPower ...bool) (bool, error) {
+	totalStarted := time.Now()
+	timing := nativeFrameTiming{}
 	now := time.Now()
 	idleMode := len(lowPower) > 0 && lowPower[0]
-	shouldUpdateSensors := state.data == nil || now.Sub(state.lastSensorUpdate) >= themeSensorInterval
-	if shouldUpdateSensors {
-		state.data = collector.CollectAll()
-		state.lastSensorUpdate = now
-		state.overlay = render.RenderOverlay(state.data, now)
-		state.lowPower = nil
+	if idleMode != state.idleMode {
+		state.idleMode = idleMode
+		state.forceDisplay = true
+		if idleMode {
+			// The active canvas is reused for the idle frame. Force a redraw
+			// because active playback may have overwritten its previous pixels.
+			state.lowPowerSignature = ""
+		}
 	}
+	started := time.Now()
+	var collected bool
+	state.data, collected = collector.CollectScheduled(now, idleMode)
+	timing.Sensor = time.Since(started)
+	minuteKey := now.YearDay()*24*60 + now.Hour()*60 + now.Minute()
+	if collected || state.viewSignature == "" || state.signatureMinute != minuteKey {
+		state.viewSignature = render.ViewSignature(state.data, now)
+		state.signatureMinute = minuteKey
+	}
+	signature := state.viewSignature
 	if idleMode {
+		changed := false
 		if state.lowPower == nil {
-			state.lowPower = render.RenderLowPower(state.data, now)
+			if state.canvas == nil {
+				state.canvas = image.NewRGBA(image.Rect(0, 0, render.OutputWidth(), render.OutputHeight()))
+			}
+			state.lowPower = state.canvas
 		}
-		if err := dev.DisplayImage(state.lowPower); err != nil {
-			return fmt.Errorf("display failed: %w", err)
+		if state.lowPowerSignature != signature {
+			started = time.Now()
+			render.RenderLowPowerInto(state.lowPower, state.data, now)
+			timing.Overlay = time.Since(started)
+			state.lowPowerSignature = signature
+			changed = true
 		}
+		// The panel firmware restores its Thermalright splash screen when the
+		// host remains silent. Keep presenting the cached monochrome frame at
+		// the idle scheduler cadence (1 FPS by default) without redrawing it.
+		if !state.forceDisplay && !changed && now.Sub(state.lastIdleSent) < nativeIdleKeepaliveWindow {
+			timing.Skipped = true
+			timing.Total = time.Since(totalStarted)
+			state.lastTiming = timing
+			return false, nil
+		}
+		display, err := displayNativeImage(dev, render, state.lowPower)
+		timing.Display = display
+		timing.Total = time.Since(totalStarted)
+		state.lastTiming = timing
+		if err != nil {
+			return false, fmt.Errorf("display failed: %w", err)
+		}
+		state.lastIdleSent = now
+		state.forceDisplay = false
 		*frameCount++
-		return nil
+		return true, nil
+	}
+
+	if state.overlay == nil {
+		state.overlay = image.NewRGBA(image.Rect(0, 0, render.OutputWidth(), render.OutputHeight()))
+	}
+	if state.overlaySignature != signature {
+		started = time.Now()
+		render.RenderOutputOverlayInto(state.overlay, state.data, now)
+		timing.Overlay = time.Since(started)
+		state.overlaySignature = signature
 	}
 
 	if state.canvas == nil {
-		state.canvas = image.NewRGBA(image.Rect(0, 0, dev.RenderWidth(), dev.RenderHeight()))
+		state.canvas = image.NewRGBA(image.Rect(0, 0, render.OutputWidth(), render.OutputHeight()))
 	}
+	started = time.Now()
 	render.RenderBackgroundInto(state.canvas, now)
+	timing.Background = time.Since(started)
 	if state.overlay != nil {
-		draw.Draw(state.canvas, state.canvas.Bounds(), state.overlay, image.Point{}, draw.Over)
+		started = time.Now()
+		render.Composite(state.canvas, state.overlay)
+		timing.Composite = time.Since(started)
 	}
-	if err := dev.DisplayImage(state.canvas); err != nil {
-		return fmt.Errorf("display failed: %w", err)
+	display, err := displayNativeImage(dev, render, state.canvas)
+	timing.Display = display
+	timing.Total = time.Since(totalStarted)
+	state.lastTiming = timing
+	if err != nil {
+		return false, fmt.Errorf("display failed: %w", err)
 	}
 
+	state.forceDisplay = false
 	*frameCount++
-	return nil
+	return true, nil
+}
+
+func displayNativeImage(dev *panel.Device, render *nativerender.Renderer, img *image.RGBA) (panel.DisplayMetrics, error) {
+	if render.WireOutput() {
+		return dev.DisplayWireImageTimed(img)
+	}
+	started := time.Now()
+	err := dev.DisplayImage(img)
+	return panel.DisplayMetrics{USBWrite: time.Since(started)}, err
 }
 
 // ensureBrowserAvailable checks if a browser is available and downloads one if needed.

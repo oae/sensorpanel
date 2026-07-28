@@ -14,7 +14,10 @@ func init() {
 }
 
 // MotherboardProvider provides motherboard sensor data (fans, voltages) on Linux.
-type MotherboardProvider struct{}
+type MotherboardProvider struct {
+	hwmonPath string
+	dimmPaths []string
+}
 
 // Meta returns the sensor metadata.
 func (p *MotherboardProvider) Meta() SensorMeta {
@@ -148,23 +151,19 @@ func dimmTempKey(index int) string {
 func (p *MotherboardProvider) readDimmTemperatures() []float64 {
 	var temps []float64
 
-	// Find all spd5118 hwmon devices (DDR5 SPD Hub temperature sensors)
-	hwmonPaths, _ := filepath.Glob("/sys/class/hwmon/hwmon*/name")
-	for _, namePath := range hwmonPaths {
-		nameBytes, err := os.ReadFile(namePath)
-		if err != nil {
-			continue
-		}
-		name := strings.TrimSpace(string(nameBytes))
-
-		if name == "spd5118" {
-			hwmonDir := filepath.Dir(namePath)
-			tempPath := filepath.Join(hwmonDir, "temp1_input")
-			if data, err := os.ReadFile(tempPath); err == nil {
-				if milliC, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
-					temps = append(temps, float64(milliC)/1000.0)
-				}
+	if p.dimmPaths == nil {
+		hwmonPaths, _ := filepath.Glob("/sys/class/hwmon/hwmon*/name")
+		p.dimmPaths = make([]string, 0, 4)
+		for _, namePath := range hwmonPaths {
+			nameBytes, err := os.ReadFile(namePath)
+			if err == nil && strings.TrimSpace(string(nameBytes)) == "spd5118" {
+				p.dimmPaths = append(p.dimmPaths, filepath.Join(filepath.Dir(namePath), "temp1_input"))
 			}
+		}
+	}
+	for _, tempPath := range p.dimmPaths {
+		if temp := readMilliValue(tempPath, 1000); temp != nil {
+			temps = append(temps, *temp)
 		}
 	}
 
@@ -172,6 +171,12 @@ func (p *MotherboardProvider) readDimmTemperatures() []float64 {
 }
 
 func (p *MotherboardProvider) findMotherboardHwmon() string {
+	if p.hwmonPath != "" {
+		if _, err := os.Stat(p.hwmonPath); err == nil {
+			return p.hwmonPath
+		}
+		p.hwmonPath = ""
+	}
 	// Look for common motherboard sensor chips
 	hwmonNames := []string{
 		"nct6687", "nct6683", "nct6775", "nct6776", "nct6779", "nct6791", "nct6792", "nct6793", "nct6795", "nct6796", "nct6797", "nct6798",
@@ -191,7 +196,8 @@ func (p *MotherboardProvider) findMotherboardHwmon() string {
 
 		for _, hwmonName := range hwmonNames {
 			if strings.Contains(name, hwmonName) {
-				return filepath.Dir(namePath)
+				p.hwmonPath = filepath.Dir(namePath)
+				return p.hwmonPath
 			}
 		}
 	}

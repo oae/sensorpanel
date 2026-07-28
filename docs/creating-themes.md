@@ -74,6 +74,7 @@ Add `native.theme.json` to the theme directory:
   "background": "#000000",
   "accent": "#2de2ff",
   "accent2": "#ff4df3",
+  "accent3": "#71ffa8",
   "text": "#f8fbff",
   "muted": "#8ea1bb",
   "panel": "#061326cc",
@@ -93,16 +94,25 @@ Add `native.theme.json` to the theme directory:
 
 `performance.profile` accepts `power-saver` (6 FPS), `balanced` (8 FPS), or
 `smooth` (12 FPS). `target_fps`, `jpeg_quality`, and `prefetch_frames` override
-the profile defaults. The native Trofeo renderer keeps a bounded prefetch cache
-instead of loading every video frame into memory. `jpeg_encoder: "auto"` uses
-libjpeg-turbo only when SensorPanel was built with `go build -tags turbojpeg`;
-otherwise it safely falls back to Go's standard JPEG encoder.
+the profile defaults. The Trofeo pipeline keeps compressed source frames in a
+bounded cache and reuses a small decoded-frame ring; it never retains the whole
+animation as raw RGBA. On LY panels, background JPEGs are rotated once into
+`$XDG_CACHE_HOME/sensorpanel/native-background/` and reused on later starts.
+`jpeg_encoder: "auto"` uses libjpeg-turbo only when SensorPanel was built with
+`go build -tags turbojpeg`; otherwise it safely falls back to Go's standard
+JPEG implementation.
 
 On Linux, `active_fps` and `idle_fps` enable adaptive rendering from local
 keyboard and mouse events: SensorPanel uses `active_fps` while the desktop
 receives input, then switches to `idle_fps` after `idle_timeout_seconds`. This
 requires read access to `/dev/input` (normally membership in the `input`
 group); without it, SensorPanel safely remains active.
+
+`idle_fps` is both the idle scheduler cadence and the panel keepalive cadence.
+In idle mode the native renderer omits video and redraws the monochrome frame
+only when formatted on-screen values change. It resends the cached pixels at
+the configured cadence (1 FPS in the Trofeo theme) so the panel firmware does
+not restore its splash screen.
 
 Current native renderer support is intentionally small: it supports the
 Trofeo-oriented `trofeo_vertical_v1` dashboard layout and theme colors. Existing

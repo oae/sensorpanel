@@ -25,7 +25,7 @@ jobs:
 
       - name: Install libusb (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
+        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libturbojpeg0-dev
 
       - name: Install libusb (macOS)
         if: matrix.os == 'macos-latest'
@@ -48,14 +48,26 @@ jobs:
         shell: pwsh
 
       - name: Build
-        run: go build -v ./...
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            go build -tags turbojpeg -v ./...
+          else
+            go build -v ./...
+          fi
+        shell: bash
 
       - name: Test
-        run: go test -v ./...
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            go test -tags turbojpeg -v ./...
+          else
+            go test -v ./...
+          fi
+        shell: bash
 
       - name: Test with race detector (Linux only)
         if: matrix.os == 'ubuntu-latest'
-        run: go test -race ./...
+        run: go test -tags turbojpeg -race ./...
 
   test-coverage:
     runs-on: ubuntu-latest
@@ -68,10 +80,10 @@ jobs:
           go-version: '1.23'
 
       - name: Install libusb
-        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
+        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libturbojpeg0-dev
 
       - name: Run tests with coverage
-        run: go test -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -tags turbojpeg -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Display coverage summary
         run: go tool cover -func=coverage.out | tail -1

@@ -61,7 +61,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libusb-1.0-0-dev
+          sudo apt-get install -y libusb-1.0-0-dev libturbojpeg0-dev
 
       - name: Install libusb (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -88,7 +88,11 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
         run: |
-          go build -ldflags="-s -w -X main.version=${{ needs.release-please.outputs.version }}" \
+          tags=()
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            tags=(-tags turbojpeg)
+          fi
+          go build "${tags[@]}" -ldflags="-s -w -X main.version=${{ needs.release-please.outputs.version }}" \
             -o sensorpanel-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} .
         shell: bash
 

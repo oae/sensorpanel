@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
+	"os"
+	"runtime"
+	"runtime/pprof"
+	"sort"
 	"time"
 
 	"github.com/oae/sensorpanel/pkg/device"
@@ -33,6 +38,10 @@ The USB Full Speed (12 Mbps) connection limits maximum throughput to about
 		targetFPS, _ := cmd.Flags().GetFloat64("target-fps")
 		nativeThemeName, _ := cmd.Flags().GetString("native-theme")
 		orientation, _ := cmd.Flags().GetInt("orientation")
+		benchmarkMode, _ := cmd.Flags().GetString("mode")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		cpuProfile, _ := cmd.Flags().GetString("cpu-profile")
+		heapProfile, _ := cmd.Flags().GetString("heap-profile")
 
 		dev, err := openConfiguredDevice()
 		if err != nil {
@@ -43,12 +52,22 @@ The USB Full Speed (12 Mbps) connection limits maximum throughput to about
 			return err
 		}
 
-		fmt.Printf("Panel: %s %s\n", dev.Info.Manufacturer, dev.Info.Product)
-		fmt.Printf("Resolution: %dx%d (%d bytes/frame)\n",
-			dev.Info.Width, dev.Info.Height, dev.Info.BufferSize)
-		fmt.Printf("USB Speed: %s, Max Packet: %d bytes\n", dev.Info.Speed, dev.Info.MaxPacketSize)
+		if !jsonOutput || nativeThemeName == "" {
+			fmt.Printf("Panel: %s %s\n", dev.Info.Manufacturer, dev.Info.Product)
+			fmt.Printf("Resolution: %dx%d (%d bytes/frame)\n",
+				dev.Info.Width, dev.Info.Height, dev.Info.BufferSize)
+			fmt.Printf("USB Speed: %s, Max Packet: %d bytes\n", dev.Info.Speed, dev.Info.MaxPacketSize)
+		}
 		if nativeThemeName != "" {
-			return runNativeThemeBenchmark(dev, nativeThemeName, duration, targetFPS)
+			return runNativeThemeBenchmark(dev, nativeThemeName, nativeBenchmarkOptions{
+				Duration:         duration,
+				TargetFPS:        targetFPS,
+				TargetOverridden: cmd.Flags().Changed("target-fps"),
+				Mode:             benchmarkMode,
+				JSON:             jsonOutput,
+				CPUProfile:       cpuProfile,
+				HeapProfile:      heapProfile,
+			})
 		}
 		if animation {
 			return runAnimationBenchmark(dev, regionWidth, regionHeight, duration, targetFPS)
@@ -171,9 +190,26 @@ func init() {
 	benchmarkCmd.Flags().Float64("target-fps", 60, "Animation target frame rate")
 	benchmarkCmd.Flags().String("native-theme", "", "Benchmark a native theme on the physical panel")
 	benchmarkCmd.Flags().Int("orientation", 0, "Display orientation for native-theme benchmark (0, 90, 180, 270)")
+	benchmarkCmd.Flags().String("mode", "active", "Native benchmark mode: active or idle")
+	benchmarkCmd.Flags().Bool("json", false, "Print native benchmark results as JSON")
+	benchmarkCmd.Flags().String("cpu-profile", "", "Write a Go CPU profile during the native benchmark")
+	benchmarkCmd.Flags().String("heap-profile", "", "Write a Go heap profile after the native benchmark")
 }
 
-func runNativeThemeBenchmark(dev *panel.Device, themeName string, duration time.Duration, targetFPS float64) error {
+type nativeBenchmarkOptions struct {
+	Duration         time.Duration
+	TargetFPS        float64
+	TargetOverridden bool
+	Mode             string
+	JSON             bool
+	CPUProfile       string
+	HeapProfile      string
+}
+
+func runNativeThemeBenchmark(dev *panel.Device, themeName string, options nativeBenchmarkOptions) error {
+	if options.Mode != "active" && options.Mode != "idle" {
+		return fmt.Errorf("benchmark mode must be active or idle")
+	}
 	t, err := theme.Load(themeName)
 	if err != nil {
 		return err
@@ -186,8 +222,18 @@ func runNativeThemeBenchmark(dev *panel.Device, themeName string, duration time.
 		return err
 	}
 	render := nativerender.New(nativeTheme, dev.RenderWidth(), dev.RenderHeight())
+	defer render.Close()
+	if dev.Profile.ProtocolType() == device.ProtocolLYBulk {
+		if err := render.ConfigureWire(dev.Profile.Width(), dev.Profile.Height(), 180-dev.Orientation); err != nil {
+			return err
+		}
+	}
 	if err := render.LoadBackgroundSequence(t.Path); err != nil {
 		return err
+	}
+	targetFPS := options.TargetFPS
+	if options.Mode == "idle" && !options.TargetOverridden && nativeTheme.Performance.IdleFPS > 0 {
+		targetFPS = nativeTheme.Performance.IdleFPS
 	}
 	if targetFPS <= 0 {
 		targetFPS = nativeTheme.Performance.TargetFPS
@@ -201,10 +247,14 @@ func runNativeThemeBenchmark(dev *panel.Device, themeName string, duration time.
 	if targetFPS <= 0 {
 		return fmt.Errorf("native theme has no animation FPS; pass --target-fps")
 	}
-	if duration <= 0 {
+	if options.Duration <= 0 {
 		return fmt.Errorf("duration must be greater than zero")
 	}
 	if err := dev.SetJPEGOptions(nativeTheme.Performance.JPEGQuality, nativeTheme.Performance.JPEGEncoder); err != nil {
+		return err
+	}
+	effectiveJPEG, err := dev.PrepareJPEGEncoder()
+	if err != nil {
 		return err
 	}
 
@@ -212,29 +262,158 @@ func runNativeThemeBenchmark(dev *panel.Device, themeName string, duration time.
 	collector.CollectAll()
 	state := &themeFrameState{}
 	frames := 0
+	attempts := 0
+	timings := make([]nativeFrameTiming, 0, int(options.Duration.Seconds()*targetFPS)+1)
+	var cpuFile *os.File
+	if options.CPUProfile != "" {
+		cpuFile, err = os.Create(options.CPUProfile)
+		if err != nil {
+			return err
+		}
+		if err := pprof.StartCPUProfile(cpuFile); err != nil {
+			_ = cpuFile.Close()
+			return err
+		}
+	}
+	stopCPUProfile := func() {
+		if cpuFile != nil {
+			pprof.StopCPUProfile()
+			_ = cpuFile.Close()
+			cpuFile = nil
+		}
+	}
+	defer stopCPUProfile()
+	cpuStarted := processCPUTime()
 	started := time.Now()
-	deadline := started.Add(duration)
+	deadline := started.Add(options.Duration)
 	interval := time.Duration(float64(time.Second) / targetFPS)
 	next := started
 	for time.Now().Before(deadline) {
-		if err := renderNativeThemeFrame(dev, collector, render, state, &frames); err != nil {
+		attempts++
+		if _, err := renderNativeThemeFrame(dev, collector, render, state, &frames, options.Mode == "idle"); err != nil {
 			return err
 		}
+		timings = append(timings, state.lastTiming)
 		next = next.Add(interval)
 		if wait := time.Until(next); wait > 0 {
 			time.Sleep(wait)
 		}
 	}
 	elapsed := time.Since(started)
+	cpuUsed := processCPUTime() - cpuStarted
+	stopCPUProfile()
+	if options.HeapProfile != "" {
+		heapFile, err := os.Create(options.HeapProfile)
+		if err != nil {
+			return err
+		}
+		runtime.GC()
+		err = pprof.WriteHeapProfile(heapFile)
+		_ = heapFile.Close()
+		if err != nil {
+			return err
+		}
+	}
 	fps := float64(frames) / elapsed.Seconds()
+	report := buildNativeBenchmarkReport(themeName, options.Mode, targetFPS, frames, attempts, elapsed, cpuUsed, timings)
+	if options.JSON {
+		encoded, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(encoded))
+		return nil
+	}
 	fmt.Println("=== Native Theme Results ===")
 	fmt.Printf("Theme:       %s\n", themeName)
+	fmt.Printf("Mode:        %s\n", options.Mode)
 	fmt.Printf("Frames:      %d\n", frames)
+	fmt.Printf("Attempts:    %d\n", attempts)
 	fmt.Printf("Time:        %.2f seconds\n", elapsed.Seconds())
 	fmt.Printf("Target FPS:  %.2f\n", targetFPS)
 	fmt.Printf("Measured:    %.2f FPS\n", fps)
-	fmt.Printf("JPEG:        %s/%d\n", nativeTheme.Performance.JPEGEncoder, nativeTheme.Performance.JPEGQuality)
+	fmt.Printf("CPU:         %.2f%% of one core\n", report.CPUPercent)
+	fmt.Printf("Frame total: %.2fms avg, %.2fms p95\n", report.Stages["total"].AverageMS, report.Stages["total"].P95MS)
+	for _, name := range []string{"background", "composite", "encode", "packetize", "usb_write", "ack", "sensor", "overlay"} {
+		stage := report.Stages[name]
+		fmt.Printf("  %-10s %.3fms avg, %.3fms p95\n", name, stage.AverageMS, stage.P95MS)
+	}
+	fmt.Printf("JPEG:        %s/%d\n", effectiveJPEG, nativeTheme.Performance.JPEGQuality)
 	return nil
+}
+
+type benchmarkStage struct {
+	AverageMS float64 `json:"average_ms"`
+	P95MS     float64 `json:"p95_ms"`
+	MaxMS     float64 `json:"max_ms"`
+}
+
+type nativeBenchmarkReport struct {
+	Theme       string                    `json:"theme"`
+	Mode        string                    `json:"mode"`
+	TargetFPS   float64                   `json:"target_fps"`
+	MeasuredFPS float64                   `json:"measured_fps"`
+	Frames      int                       `json:"frames"`
+	Attempts    int                       `json:"attempts"`
+	ElapsedSec  float64                   `json:"elapsed_seconds"`
+	CPUPercent  float64                   `json:"cpu_percent_one_core"`
+	HeapBytes   uint64                    `json:"heap_bytes"`
+	Stages      map[string]benchmarkStage `json:"stages"`
+}
+
+func buildNativeBenchmarkReport(themeName, mode string, targetFPS float64, frames, attempts int, elapsed, cpuUsed time.Duration, timings []nativeFrameTiming) nativeBenchmarkReport {
+	stageValues := map[string][]time.Duration{
+		"sensor": {}, "overlay": {}, "background": {}, "composite": {},
+		"encode": {}, "packetize": {}, "usb_write": {}, "ack": {}, "total": {},
+	}
+	for _, timing := range timings {
+		stageValues["sensor"] = append(stageValues["sensor"], timing.Sensor)
+		stageValues["overlay"] = append(stageValues["overlay"], timing.Overlay)
+		stageValues["background"] = append(stageValues["background"], timing.Background)
+		stageValues["composite"] = append(stageValues["composite"], timing.Composite)
+		stageValues["encode"] = append(stageValues["encode"], timing.Display.Encode)
+		stageValues["packetize"] = append(stageValues["packetize"], timing.Display.Packetize)
+		stageValues["usb_write"] = append(stageValues["usb_write"], timing.Display.USBWrite)
+		stageValues["ack"] = append(stageValues["ack"], timing.Display.ACK)
+		stageValues["total"] = append(stageValues["total"], timing.Total)
+	}
+	stages := make(map[string]benchmarkStage, len(stageValues))
+	for name, values := range stageValues {
+		stages[name] = summarizeDurations(values)
+	}
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	cpuPercent := 0.0
+	if elapsed > 0 && cpuUsed > 0 {
+		cpuPercent = float64(cpuUsed) / float64(elapsed) * 100
+	}
+	measuredFPS := 0.0
+	if elapsed > 0 {
+		measuredFPS = float64(frames) / elapsed.Seconds()
+	}
+	return nativeBenchmarkReport{
+		Theme: themeName, Mode: mode, TargetFPS: targetFPS, MeasuredFPS: measuredFPS,
+		Frames: frames, Attempts: attempts, ElapsedSec: elapsed.Seconds(),
+		CPUPercent: cpuPercent, HeapBytes: memory.HeapAlloc, Stages: stages,
+	}
+}
+
+func summarizeDurations(values []time.Duration) benchmarkStage {
+	if len(values) == 0 {
+		return benchmarkStage{}
+	}
+	sorted := append([]time.Duration(nil), values...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	var total time.Duration
+	for _, value := range sorted {
+		total += value
+	}
+	p95 := sorted[(len(sorted)-1)*95/100]
+	return benchmarkStage{
+		AverageMS: float64(total) / float64(len(sorted)) / float64(time.Millisecond),
+		P95MS:     float64(p95) / float64(time.Millisecond),
+		MaxMS:     float64(sorted[len(sorted)-1]) / float64(time.Millisecond),
+	}
 }
 
 func runAnimationBenchmark(dev *panel.Device, width, height int, duration time.Duration, targetFPS float64) error {

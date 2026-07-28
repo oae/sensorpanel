@@ -65,6 +65,38 @@ func TestBuildLYPacketAddsEmptyLastChunkForExactMultiple(t *testing.T) {
 	}
 }
 
+func TestBuildLYPacketIntoReusesBufferAndClearsPadding(t *testing.T) {
+	reuse := make([]byte, 0, 8*lyChunkSize)
+	first := buildLYPacketInto(make([]byte, lyChunkDataSize*5), reuse)
+	for i := range first {
+		first[i] = 0xff
+	}
+	payload := []byte{1, 2, 3}
+	second := buildLYPacketInto(payload, first)
+	if &second[0] != &first[0] {
+		t.Fatal("buildLYPacketInto allocated despite sufficient capacity")
+	}
+	if got := second[lyChunkHeaderSize : lyChunkHeaderSize+len(payload)]; !bytes.Equal(got, payload) {
+		t.Fatalf("payload = %v, want %v", got, payload)
+	}
+	for i, value := range second[lyChunkHeaderSize+len(payload):] {
+		if value != 0 {
+			t.Fatalf("stale byte at %d = %x", lyChunkHeaderSize+len(payload)+i, value)
+		}
+	}
+}
+
+func TestBuildLYPacketIntoSteadyStateAllocations(t *testing.T) {
+	payload := make([]byte, 64*1024)
+	reuse := buildLYPacketInto(payload, nil)
+	allocations := testing.AllocsPerRun(100, func() {
+		reuse = buildLYPacketInto(payload, reuse)
+	})
+	if allocations != 0 {
+		t.Fatalf("steady-state allocations = %.2f, want 0", allocations)
+	}
+}
+
 func TestRotateRGBA90Clockwise(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 2, 3))
 	setTestPixel(src, 0, 0, color.RGBA{R: 10, A: 255})

@@ -16,8 +16,14 @@ func init() {
 	Register(&CPUProvider{})
 }
 
-// CPUProvider provides CPU sensor data on Linux.
-type CPUProvider struct{}
+// CPUProvider provides CPU sensor data on Linux. Static metadata and sysfs
+// paths are discovered once and refreshed only after a read failure.
+type CPUProvider struct {
+	name       string
+	tempPath   string
+	freqPath   string
+	discovered bool
+}
 
 // Meta returns the sensor metadata.
 func (p *CPUProvider) Meta() SensorMeta {
@@ -45,6 +51,7 @@ func (p *CPUProvider) Available() bool {
 
 // Collect gathers CPU sensor data.
 func (p *CPUProvider) Collect(state *CollectorState) map[string]interface{} {
+	p.discover()
 	result := make(map[string]interface{})
 
 	// Get CPU name
@@ -111,7 +118,7 @@ func (p *CPUProvider) collectLoad(state *CollectorState) float64 {
 	state.Set("cpu_prev_total", total)
 	state.Set("cpu_prev_time", time.Now())
 
-	if !hasPrev || time.Since(prevTime) > 5*time.Second {
+	if !hasPrev || time.Since(prevTime) > 2*time.Minute {
 		return 0
 	}
 
@@ -126,6 +133,33 @@ func (p *CPUProvider) collectLoad(state *CollectorState) float64 {
 }
 
 func (p *CPUProvider) collectTemperature() *float64 {
+	if p.tempPath != "" {
+		if temp := readMilliValue(p.tempPath, 1000); temp != nil {
+			return temp
+		}
+		p.discovered = false
+		p.discover()
+		if p.tempPath != "" {
+			return readMilliValue(p.tempPath, 1000)
+		}
+	}
+	return nil
+}
+
+func (p *CPUProvider) discover() {
+	if p.discovered {
+		return
+	}
+	p.discovered = true
+	p.name = p.readName()
+	p.tempPath = p.findTemperaturePath()
+	p.freqPath = ""
+	if _, err := os.Stat("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"); err == nil {
+		p.freqPath = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
+	}
+}
+
+func (p *CPUProvider) findTemperaturePath() string {
 	// Try hwmon first
 	hwmonPaths, _ := filepath.Glob("/sys/class/hwmon/hwmon*/name")
 	for _, namePath := range hwmonPaths {
@@ -141,16 +175,9 @@ func (p *CPUProvider) collectTemperature() *float64 {
 			dir := filepath.Dir(namePath)
 			tempFiles, _ := filepath.Glob(filepath.Join(dir, "temp*_input"))
 			for _, tempFile := range tempFiles {
-				data, err := os.ReadFile(tempFile)
-				if err != nil {
-					continue
+				if readMilliValue(tempFile, 1000) != nil {
+					return tempFile
 				}
-				milliC, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-				if err != nil {
-					continue
-				}
-				temp := float64(milliC) / 1000.0
-				return &temp
 			}
 		}
 	}
@@ -166,36 +193,27 @@ func (p *CPUProvider) collectTemperature() *float64 {
 		zoneType := strings.TrimSpace(string(typeBytes))
 		if strings.Contains(strings.ToLower(zoneType), "cpu") ||
 			strings.Contains(strings.ToLower(zoneType), "x86_pkg") {
-			data, err := os.ReadFile(tempPath)
-			if err != nil {
-				continue
+			if readMilliValue(tempPath, 1000) != nil {
+				return tempPath
 			}
-			milliC, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-			if err != nil {
-				continue
-			}
-			temp := float64(milliC) / 1000.0
-			return &temp
 		}
 	}
 
-	return nil
+	return ""
 }
 
 func (p *CPUProvider) collectFrequency() *float64 {
-	// Try cpufreq
-	freqFiles, _ := filepath.Glob("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
-	for _, freqFile := range freqFiles {
-		data, err := os.ReadFile(freqFile)
+	if p.freqPath != "" {
+		data, err := os.ReadFile(p.freqPath)
 		if err != nil {
-			continue
+			p.discovered = false
+			return nil
 		}
 		khz, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-		if err != nil {
-			continue
+		if err == nil {
+			freq := float64(khz) / 1000.0
+			return &freq
 		}
-		freq := float64(khz) / 1000.0
-		return &freq
 	}
 
 	// Fallback to /proc/cpuinfo
@@ -223,6 +241,13 @@ func (p *CPUProvider) collectFrequency() *float64 {
 }
 
 func (p *CPUProvider) collectName() string {
+	if p.name == "" {
+		p.discover()
+	}
+	return p.name
+}
+
+func (p *CPUProvider) readName() string {
 	file, err := os.Open("/proc/cpuinfo")
 	if err != nil {
 		return "Unknown CPU"
@@ -241,4 +266,17 @@ func (p *CPUProvider) collectName() string {
 	}
 
 	return "Unknown CPU"
+}
+
+func readMilliValue(path string, divisor float64) *float64 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	raw, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return nil
+	}
+	value := float64(raw) / divisor
+	return &value
 }

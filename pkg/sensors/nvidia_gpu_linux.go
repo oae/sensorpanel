@@ -23,7 +23,7 @@ func (p *NvidiaGPUProvider) Meta() SensorMeta {
 	return SensorMeta{
 		ID:          "nvidia_gpu",
 		Name:        "NVIDIA GPU",
-		Description: "NVIDIA GPU statistics via nvidia-smi",
+		Description: "NVIDIA GPU statistics via NVML with nvidia-smi fallback",
 		Category:    "gpu",
 		Platforms:   []string{"linux"},
 		Fields: []FieldDef{
@@ -42,7 +42,7 @@ func (p *NvidiaGPUProvider) Meta() SensorMeta {
 
 // Available returns true if NVIDIA GPU data can be collected.
 func (p *NvidiaGPUProvider) Available() bool {
-	return p.findNvidiaSMI() != ""
+	return nvmlAvailable() || p.findNvidiaSMI() != ""
 }
 
 // Configure applies the given config to the provider.
@@ -67,6 +67,9 @@ func (p *NvidiaGPUProvider) Options() []OptionDef {
 
 // Collect gathers NVIDIA GPU sensor data.
 func (p *NvidiaGPUProvider) Collect(state *CollectorState) map[string]interface{} {
+	if result, err := queryNVML(); err == nil && len(result) > 0 {
+		return result
+	}
 	smiPath := p.findNvidiaSMI()
 	if smiPath == "" {
 		return nil

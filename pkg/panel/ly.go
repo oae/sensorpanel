@@ -7,6 +7,17 @@ import (
 	"time"
 )
 
+// DisplayMetrics contains the expensive stages of one LY frame presentation.
+type DisplayMetrics struct {
+	Rotate    time.Duration `json:"rotate"`
+	Encode    time.Duration `json:"encode"`
+	Packetize time.Duration `json:"packetize"`
+	USBWrite  time.Duration `json:"usb_write"`
+	ACK       time.Duration `json:"ack"`
+	JPEGBytes int           `json:"jpeg_bytes"`
+	WireBytes int           `json:"wire_bytes"`
+}
+
 const (
 	lyHandshakeReadSize  = 512
 	lyHandshakeTimeout   = time.Second
@@ -59,11 +70,24 @@ func (d *Device) lyHandshake() error {
 }
 
 func (d *Device) lySend(payload []byte) error {
+	_, err := d.lySendTimed(payload)
+	return err
+}
+
+func (d *Device) lySendTimed(payload []byte) (DisplayMetrics, error) {
+	metrics := DisplayMetrics{JPEGBytes: len(payload)}
 	if d.outEP == nil || d.inEP == nil {
-		return ErrDeviceNotOpen
+		return metrics, ErrDeviceNotOpen
 	}
 
-	packet := buildLYPacket(payload)
+	started := time.Now()
+	packet := buildLYPacketInto(payload, d.lyPacket)
+	metrics.Packetize = time.Since(started)
+	metrics.WireBytes = len(packet)
+	d.lyPacket = packet
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), lyWriteTimeout)
+	defer writeCancel()
+	started = time.Now()
 	for offset := 0; offset < len(packet); {
 		writeSize := lyUSBWriteSize
 		remaining := len(packet) - offset
@@ -71,32 +95,51 @@ func (d *Device) lySend(payload []byte) error {
 			writeSize = remaining
 		}
 
-		writeCtx, writeCancel := context.WithTimeout(context.Background(), lyWriteTimeout)
 		n, err := d.outEP.WriteContext(writeCtx, packet[offset:offset+writeSize])
-		writeCancel()
 		if err != nil {
-			return fmt.Errorf("LY frame write: %w", err)
+			return metrics, fmt.Errorf("LY frame write: %w", err)
 		}
 		if n != writeSize {
-			return fmt.Errorf("%w: LY frame wrote %d/%d bytes", ErrWriteIncomplete, n, writeSize)
+			return metrics, fmt.Errorf("%w: LY frame wrote %d/%d bytes", ErrWriteIncomplete, n, writeSize)
 		}
 		offset += writeSize
 	}
+	metrics.USBWrite = time.Since(started)
 
-	ack := make([]byte, lyHandshakeReadSize)
+	if cap(d.lyACK) < lyHandshakeReadSize {
+		d.lyACK = make([]byte, lyHandshakeReadSize)
+	} else {
+		d.lyACK = d.lyACK[:lyHandshakeReadSize]
+	}
 	readCtx, readCancel := context.WithTimeout(context.Background(), lyReadTimeout)
 	defer readCancel()
-	if _, err := d.inEP.ReadContext(readCtx, ack); err != nil {
-		return fmt.Errorf("LY frame ACK read: %w", err)
+	started = time.Now()
+	if _, err := d.inEP.ReadContext(readCtx, d.lyACK); err != nil {
+		return metrics, fmt.Errorf("LY frame ACK read: %w", err)
 	}
+	metrics.ACK = time.Since(started)
 
-	return nil
+	return metrics, nil
 }
 
 func buildLYPacket(payload []byte) []byte {
+	return buildLYPacketInto(payload, nil)
+}
+
+func buildLYPacketInto(payload, reuse []byte) []byte {
 	totalSize := len(payload)
 	numChunks := totalSize/lyChunkDataSize + 1
-	chunks := make([]byte, numChunks*lyChunkSize)
+	paddedChunks := numChunks
+	if remainder := paddedChunks % lyPadChunkMultiple; remainder != 0 {
+		paddedChunks += lyPadChunkMultiple - remainder
+	}
+	packetSize := paddedChunks * lyChunkSize
+	var chunks []byte
+	if cap(reuse) < packetSize {
+		chunks = make([]byte, packetSize)
+	} else {
+		chunks = reuse[:packetSize]
+	}
 	lastChunkData := totalSize % lyChunkDataSize
 
 	for i := 0; i < numChunks; i++ {
@@ -106,6 +149,7 @@ func buildLYPacket(payload []byte) []byte {
 			dataLen = lastChunkData
 		}
 
+		clear(chunks[offset : offset+lyChunkHeaderSize])
 		chunks[offset] = 0x01
 		chunks[offset+1] = 0xff
 		binary.LittleEndian.PutUint32(chunks[offset+2:offset+6], uint32(totalSize))
@@ -116,17 +160,13 @@ func buildLYPacket(payload []byte) []byte {
 
 		srcOffset := i * lyChunkDataSize
 		copy(chunks[offset+lyChunkHeaderSize:offset+lyChunkHeaderSize+dataLen], payload[srcOffset:srcOffset+dataLen])
+		if dataLen < lyChunkDataSize {
+			clear(chunks[offset+lyChunkHeaderSize+dataLen : offset+lyChunkSize])
+		}
 	}
 
-	paddedChunks := numChunks
-	if remainder := paddedChunks % lyPadChunkMultiple; remainder != 0 {
-		paddedChunks += lyPadChunkMultiple - remainder
+	if paddedChunks > numChunks {
+		clear(chunks[numChunks*lyChunkSize:])
 	}
-	if paddedChunks == numChunks {
-		return chunks
-	}
-
-	padded := make([]byte, paddedChunks*lyChunkSize)
-	copy(padded, chunks)
-	return padded
+	return chunks
 }

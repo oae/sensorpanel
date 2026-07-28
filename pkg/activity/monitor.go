@@ -7,6 +7,7 @@ import "time"
 // provider intentionally reports active so dashboards never appear frozen.
 type Monitor interface {
 	Idle() bool
+	Events() <-chan struct{}
 	Close()
 }
 

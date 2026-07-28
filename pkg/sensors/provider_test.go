@@ -2,6 +2,7 @@ package sensors
 
 import (
 	"testing"
+	"time"
 )
 
 func TestFieldType_String(t *testing.T) {
@@ -280,9 +281,11 @@ func TestToSnakeCase(t *testing.T) {
 
 // mockProvider is a test implementation of Provider
 type mockProvider struct {
-	meta      SensorMeta
-	available bool
-	data      map[string]interface{}
+	meta           SensorMeta
+	available      bool
+	data           map[string]interface{}
+	availableCalls int
+	collectCalls   int
 }
 
 func (m *mockProvider) Meta() SensorMeta {
@@ -290,15 +293,66 @@ func (m *mockProvider) Meta() SensorMeta {
 }
 
 func (m *mockProvider) Available() bool {
+	m.availableCalls++
 	return m.available
 }
 
 func (m *mockProvider) Collect(state *CollectorState) map[string]interface{} {
+	m.collectCalls++
 	return m.data
 }
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func TestCollectorScheduledCadenceAndDiscoveryCache(t *testing.T) {
+	reg := NewRegistry()
+	cpu := &mockProvider{
+		meta:      SensorMeta{ID: "cpu", Category: "system"},
+		available: true,
+		data:      map[string]interface{}{"load": float64(42)},
+	}
+	disk := &mockProvider{
+		meta:      SensorMeta{ID: "disk", Category: "storage"},
+		available: true,
+		data:      map[string]interface{}{"percent": float64(20)},
+	}
+	reg.Register(cpu)
+	reg.Register(disk)
+	collector := &Collector{
+		registry:          reg,
+		state:             NewCollectorState(),
+		config:            &Config{},
+		lastCollected:     make(map[string]time.Time),
+		snapshot:          make(map[string]interface{}),
+		discoveryInterval: time.Minute,
+	}
+
+	start := time.Unix(100, 0)
+	snapshot, collected := collector.CollectScheduled(start, false)
+	if !collected || len(snapshot) != 2 {
+		t.Fatalf("first collection = (%v, %v), want two sensors and collected", snapshot, collected)
+	}
+	if cpu.availableCalls != 1 || disk.availableCalls != 1 {
+		t.Fatalf("availability calls = cpu:%d disk:%d, want one each", cpu.availableCalls, disk.availableCalls)
+	}
+
+	_, collected = collector.CollectScheduled(start.Add(2*time.Second), false)
+	if !collected {
+		t.Fatal("CPU should be due after two seconds")
+	}
+	if cpu.collectCalls != 2 || disk.collectCalls != 1 {
+		t.Fatalf("collect calls = cpu:%d disk:%d, want 2/1", cpu.collectCalls, disk.collectCalls)
+	}
+	if cpu.availableCalls != 1 || disk.availableCalls != 1 {
+		t.Fatal("provider discovery ran before its cache expired")
+	}
+
+	_, _ = collector.CollectScheduled(start.Add(7*time.Second), true)
+	if cpu.collectCalls != 3 || disk.collectCalls != 1 {
+		t.Fatalf("idle collect calls = cpu:%d disk:%d, want 3/1", cpu.collectCalls, disk.collectCalls)
+	}
 }
 
 func containsHelper(s, substr string) bool {

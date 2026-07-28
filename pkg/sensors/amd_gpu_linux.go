@@ -14,7 +14,11 @@ func init() {
 }
 
 // AMDGPUProvider provides AMD GPU sensor data on Linux.
-type AMDGPUProvider struct{}
+type AMDGPUProvider struct {
+	cardPath   string
+	name       string
+	hwmonPaths []string
+}
 
 // Meta returns the sensor metadata.
 func (p *AMDGPUProvider) Meta() SensorMeta {
@@ -52,7 +56,7 @@ func (p *AMDGPUProvider) Collect(state *CollectorState) map[string]interface{} {
 	}
 
 	result := map[string]interface{}{
-		"name": p.getGPUName(cardPath),
+		"name": p.cachedGPUName(cardPath),
 	}
 
 	// Read GPU load
@@ -63,8 +67,10 @@ func (p *AMDGPUProvider) Collect(state *CollectorState) map[string]interface{} {
 	}
 
 	// Read data from hwmon
-	hwmonPaths, _ := filepath.Glob(filepath.Join(cardPath, "hwmon", "hwmon*"))
-	for _, hwmon := range hwmonPaths {
+	if p.hwmonPaths == nil {
+		p.hwmonPaths, _ = filepath.Glob(filepath.Join(cardPath, "hwmon", "hwmon*"))
+	}
+	for _, hwmon := range p.hwmonPaths {
 		// Temperature
 		if data, err := os.ReadFile(filepath.Join(hwmon, "temp1_input")); err == nil {
 			if milliC, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
@@ -156,6 +162,13 @@ func (p *AMDGPUProvider) Collect(state *CollectorState) map[string]interface{} {
 	return result
 }
 
+func (p *AMDGPUProvider) cachedGPUName(cardPath string) string {
+	if p.name == "" {
+		p.name = p.getGPUName(cardPath)
+	}
+	return p.name
+}
+
 func (p *AMDGPUProvider) getGPUName(cardPath string) string {
 	// Try to get the marketing name from the device
 	if data, err := os.ReadFile(filepath.Join(cardPath, "product_name")); err == nil {
@@ -170,6 +183,14 @@ func (p *AMDGPUProvider) getGPUName(cardPath string) string {
 }
 
 func (p *AMDGPUProvider) findAMDCard() string {
+	if p.cardPath != "" {
+		if _, err := os.Stat(p.cardPath); err == nil {
+			return p.cardPath
+		}
+		p.cardPath = ""
+		p.name = ""
+		p.hwmonPaths = nil
+	}
 	cardPaths, _ := filepath.Glob("/sys/class/drm/card*/device")
 
 	for _, cardPath := range cardPaths {
@@ -179,14 +200,16 @@ func (p *AMDGPUProvider) findAMDCard() string {
 			continue
 		}
 		if strings.Contains(driverLink, "amdgpu") {
-			return cardPath
+			p.cardPath = cardPath
+			return p.cardPath
 		}
 
 		// Also check for vendor ID (AMD = 0x1002)
 		if data, err := os.ReadFile(filepath.Join(cardPath, "vendor")); err == nil {
 			vendor := strings.TrimSpace(string(data))
 			if vendor == "0x1002" {
-				return cardPath
+				p.cardPath = cardPath
+				return p.cardPath
 			}
 		}
 	}

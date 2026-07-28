@@ -3,13 +3,19 @@
 package jpegcodec
 
 import (
-	"bytes"
 	"fmt"
-	"image"
 )
 
 func turboAvailable() bool { return false }
 
-func encodeTurbo(_ *bytes.Buffer, _ image.Image, _ int) error {
-	return fmt.Errorf("TurboJPEG is unavailable")
+func newTurboEncoder(_ Config) (Encoder, error) {
+	return nil, fmt.Errorf("TurboJPEG is unavailable")
+}
+
+func newTurboDecoder(_ Config) (Decoder, error) {
+	return nil, fmt.Errorf("TurboJPEG is unavailable")
+}
+
+func rotateTurboJPEG(_ []byte, _ int) ([]byte, error) {
+	return nil, fmt.Errorf("TurboJPEG is unavailable")
 }

@@ -1,6 +1,9 @@
 package nativerender
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"image"
 	"image/color"
@@ -10,10 +13,13 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/oae/sensorpanel/pkg/jpegcodec"
+	apppaths "github.com/oae/sensorpanel/pkg/paths"
 	bitmap "github.com/oae/sensorpanel/pkg/renderer"
 )
 
@@ -23,18 +29,28 @@ type Renderer struct {
 	width  int
 	height int
 
+	outputWidth    int
+	outputHeight   int
+	wireAngle      int
+	wireOutput     bool
+	logicalScratch *image.RGBA
+
 	bg        color.RGBA
 	accent    color.RGBA
 	accent2   color.RGBA
+	accent3   color.RGBA
 	text      color.RGBA
 	muted     color.RGBA
 	panel     color.RGBA
 	panelLine color.RGBA
 
 	backgroundPaths    []string
+	backgroundJPEG     [][]byte
 	backgroundCache    map[int]*image.RGBA
 	backgroundOrder    []int
-	backgroundRGB      [][]byte
+	backgroundFree     []*image.RGBA
+	backgroundDecoder  jpegcodec.Decoder
+	backgroundCacheMax int
 	backgroundFPS      float64
 	backgroundOpacity  float64
 	backgroundPrefetch int
@@ -45,16 +61,19 @@ type Renderer struct {
 // New creates a native renderer for the target logical display size.
 func New(theme *Theme, width, height int) *Renderer {
 	r := &Renderer{
-		theme:     theme,
-		width:     width,
-		height:    height,
-		bg:        parseColor(theme.Background),
-		accent:    parseColor(theme.Accent),
-		accent2:   parseColor(theme.Accent2),
-		text:      parseColor(theme.Text),
-		muted:     parseColor(theme.Muted),
-		panel:     parseColor(theme.Panel),
-		panelLine: parseColor(theme.PanelLine),
+		theme:        theme,
+		width:        width,
+		height:       height,
+		outputWidth:  width,
+		outputHeight: height,
+		bg:           parseColor(theme.Background),
+		accent:       parseColor(theme.Accent),
+		accent2:      parseColor(theme.Accent2),
+		accent3:      parseColor(theme.Accent3),
+		text:         parseColor(theme.Text),
+		muted:        parseColor(theme.Muted),
+		panel:        parseColor(theme.Panel),
+		panelLine:    parseColor(theme.PanelLine),
 	}
 	if theme.BackgroundSequence != nil {
 		r.backgroundFPS = theme.BackgroundSequence.FPS
@@ -65,6 +84,25 @@ func New(theme *Theme, width, height int) *Renderer {
 	}
 	return r
 }
+
+// ConfigureWire makes the renderer produce the panel's physical JPEG
+// orientation. Background JPEGs are transformed once into the application
+// cache and overlays are rotated only when their sensor values change.
+func (r *Renderer) ConfigureWire(width, height, clockwiseDegrees int) error {
+	clockwiseDegrees = ((clockwiseDegrees % 360) + 360) % 360
+	if clockwiseDegrees != 0 && clockwiseDegrees != 90 && clockwiseDegrees != 180 && clockwiseDegrees != 270 {
+		return fmt.Errorf("wire rotation must be 0, 90, 180, or 270")
+	}
+	r.outputWidth = width
+	r.outputHeight = height
+	r.wireAngle = clockwiseDegrees
+	r.wireOutput = true
+	return nil
+}
+
+func (r *Renderer) OutputWidth() int  { return r.outputWidth }
+func (r *Renderer) OutputHeight() int { return r.outputHeight }
+func (r *Renderer) WireOutput() bool  { return r.wireOutput }
 
 // LoadBackgroundSequence loads pre-rendered background frames relative to baseDir.
 func (r *Renderer) LoadBackgroundSequence(baseDir string) error {
@@ -98,25 +136,63 @@ func (r *Renderer) LoadBackgroundSequence(baseDir string) error {
 	if len(paths) == 0 {
 		return fmt.Errorf("background sequence %s has no frames", dir)
 	}
+	if r.wireOutput {
+		transformed, err := r.prepareWireBackgrounds(paths)
+		if err != nil {
+			r.backgroundJPEG, err = r.transformWireBackgroundsInMemory(paths)
+			if err != nil {
+				return fmt.Errorf("prepare wire backgrounds: %w", err)
+			}
+		} else {
+			paths = transformed
+		}
+	}
 	r.backgroundPaths = paths
+	r.backgroundCacheMax = 2
 	r.backgroundMu.Lock()
 	r.backgroundCache = make(map[int]*image.RGBA)
 	r.backgroundOrder = nil
+	r.backgroundFree = nil
 	r.backgroundMu.Unlock()
-	if seq.Cache == "memory" {
-		r.backgroundRGB = make([][]byte, len(paths))
-		for i := range paths {
-			frame, err := loadRGBA(paths[i], r.width, r.height)
-			if err != nil {
-				return err
-			}
-			r.backgroundRGB[i] = rgbaToDimmedRGB(frame, clamp(r.backgroundOpacity, 0, 1))
-		}
-		r.backgroundMu.Lock()
-		r.backgroundCache = nil
-		r.backgroundMu.Unlock()
+	var first []byte
+	if len(r.backgroundJPEG) == len(paths) {
+		first = r.backgroundJPEG[0]
+	} else {
+		first, _ = os.ReadFile(paths[0])
 	}
-	if len(paths) > 1 && r.backgroundRGB == nil && r.backgroundPrefetch > 0 {
+	if len(first) > 0 {
+		if config, _, err := image.DecodeConfig(bytes.NewReader(first)); err == nil &&
+			config.Width == r.outputWidth && config.Height == r.outputHeight {
+			decoder, err := jpegcodec.NewDecoder(jpegcodec.Config{
+				Width:   r.outputWidth,
+				Height:  r.outputHeight,
+				Backend: "auto",
+			})
+			if err == nil {
+				r.backgroundDecoder = decoder
+				const maxCompressedCache = 64 << 20
+				total := int64(0)
+				for _, path := range paths {
+					if info, statErr := os.Stat(path); statErr == nil {
+						total += info.Size()
+					}
+				}
+				if r.backgroundJPEG == nil && total > 0 && total <= maxCompressedCache {
+					r.backgroundJPEG = make([][]byte, len(paths))
+					r.backgroundJPEG[0] = first
+					for i := 1; i < len(paths); i++ {
+						data, readErr := os.ReadFile(paths[i])
+						if readErr != nil {
+							r.backgroundJPEG = nil
+							break
+						}
+						r.backgroundJPEG[i] = data
+					}
+				}
+			}
+		}
+	}
+	if len(paths) > 1 && r.backgroundDecoder == nil && r.backgroundPrefetch > 0 {
 		r.prefetchRequests = make(chan int, 1)
 		go r.prefetchLoop()
 		r.requestPrefetch(0)
@@ -124,17 +200,120 @@ func (r *Renderer) LoadBackgroundSequence(baseDir string) error {
 	return nil
 }
 
+func (r *Renderer) transformWireBackgroundsInMemory(source []string) ([][]byte, error) {
+	result := make([][]byte, len(source))
+	for i, input := range source {
+		data, err := os.ReadFile(input)
+		if err != nil {
+			return nil, err
+		}
+		result[i], err = jpegcodec.RotateJPEG(data, r.wireAngle)
+		if err != nil {
+			return nil, err
+		}
+		config, _, err := image.DecodeConfig(bytes.NewReader(result[i]))
+		if err != nil || config.Width != r.outputWidth || config.Height != r.outputHeight {
+			return nil, fmt.Errorf("rotated frame %s is %dx%d, expected %dx%d",
+				input, config.Width, config.Height, r.outputWidth, r.outputHeight)
+		}
+	}
+	return result, nil
+}
+
+func (r *Renderer) prepareWireBackgrounds(source []string) ([]string, error) {
+	cacheRoot, err := apppaths.CacheDir()
+	if err != nil {
+		return nil, err
+	}
+	hash := sha256.New()
+	_, _ = fmt.Fprintf(hash, "wire-v1:%dx%d:%d", r.outputWidth, r.outputHeight, r.wireAngle)
+	for _, path := range source {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return nil, statErr
+		}
+		_, _ = fmt.Fprintf(hash, "\x00%s:%d:%d", path, info.Size(), info.ModTime().UnixNano())
+	}
+	key := hex.EncodeToString(hash.Sum(nil))[:20]
+	dir := filepath.Join(cacheRoot, "native-background", key)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	result := make([]string, len(source))
+	for i, input := range source {
+		output := filepath.Join(dir, fmt.Sprintf("frame_%06d.jpg", i))
+		if validJPEGSize(output, r.outputWidth, r.outputHeight) {
+			result[i] = output
+			continue
+		}
+		data, err := os.ReadFile(input)
+		if err != nil {
+			return nil, err
+		}
+		transformed, err := jpegcodec.RotateJPEG(data, r.wireAngle)
+		if err != nil {
+			return nil, fmt.Errorf("rotate %s: %w", input, err)
+		}
+		config, _, err := image.DecodeConfig(bytes.NewReader(transformed))
+		if err != nil || config.Width != r.outputWidth || config.Height != r.outputHeight {
+			return nil, fmt.Errorf("rotated frame %s is %dx%d, expected %dx%d",
+				input, config.Width, config.Height, r.outputWidth, r.outputHeight)
+		}
+		temporary := output + ".tmp"
+		if err := os.WriteFile(temporary, transformed, 0o644); err != nil {
+			return nil, err
+		}
+		if err := os.Rename(temporary, output); err != nil {
+			return nil, err
+		}
+		result[i] = output
+	}
+	return result, nil
+}
+
+func validJPEGSize(path string, width, height int) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	config, _, err := image.DecodeConfig(file)
+	return err == nil && config.Width == width && config.Height == height
+}
+
+// Close releases codec and prefetch resources owned by the renderer.
+func (r *Renderer) Close() error {
+	if r.prefetchRequests != nil {
+		close(r.prefetchRequests)
+		r.prefetchRequests = nil
+	}
+	if r.backgroundDecoder != nil {
+		err := r.backgroundDecoder.Close()
+		r.backgroundDecoder = nil
+		return err
+	}
+	return nil
+}
+
+// BackgroundDecoder returns the effective decoder backend.
+func (r *Renderer) BackgroundDecoder() string {
+	if r.backgroundDecoder == nil {
+		return "image"
+	}
+	return r.backgroundDecoder.Name()
+}
+
 // Render draws the current frame.
 func (r *Renderer) Render(data map[string]interface{}, now time.Time) *image.RGBA {
 	img := r.RenderBackground(now)
 	overlay := r.RenderOverlay(data, now)
-	draw.Draw(img, img.Bounds(), overlay, image.Point{}, draw.Over)
+	r.Composite(img, overlay)
 	return img
 }
 
 // RenderBackground draws only the animated/static background layer.
 func (r *Renderer) RenderBackground(now time.Time) *image.RGBA {
-	img := image.NewRGBA(image.Rect(0, 0, r.width, r.height))
+	img := image.NewRGBA(image.Rect(0, 0, r.outputWidth, r.outputHeight))
 	r.RenderBackgroundInto(img, now)
 	return img
 }
@@ -142,16 +321,40 @@ func (r *Renderer) RenderBackground(now time.Time) *image.RGBA {
 // RenderBackgroundInto renders into a caller-owned buffer so animated themes
 // can reuse their canvas instead of allocating several megabytes every frame.
 func (r *Renderer) RenderBackgroundInto(img *image.RGBA, now time.Time) {
-	if img.Bounds().Dx() != r.width || img.Bounds().Dy() != r.height {
+	if img.Bounds().Dx() != r.outputWidth || img.Bounds().Dy() != r.outputHeight {
 		return
 	}
-	draw.Draw(img, img.Bounds(), &image.Uniform{r.bg}, image.Point{}, draw.Src)
+	if len(r.backgroundPaths) == 0 || r.backgroundFPS <= 0 {
+		draw.Draw(img, img.Bounds(), &image.Uniform{r.bg}, image.Point{}, draw.Src)
+		return
+	}
 	r.drawBackgroundSequence(img, now)
+}
+
+// RenderOutputOverlayInto produces an overlay in the configured output
+// orientation. Wire rotation happens only when this method is called.
+func (r *Renderer) RenderOutputOverlayInto(img *image.RGBA, data map[string]interface{}, now time.Time) {
+	if !r.wireOutput {
+		r.RenderOverlayInto(img, data, now)
+		return
+	}
+	if r.logicalScratch == nil {
+		r.logicalScratch = image.NewRGBA(image.Rect(0, 0, r.width, r.height))
+	}
+	r.RenderOverlayInto(r.logicalScratch, data, now)
+	rotateRGBAInto(img, r.logicalScratch, r.wireAngle)
 }
 
 // RenderOverlay draws only the sensor overlay layer.
 func (r *Renderer) RenderOverlay(data map[string]interface{}, now time.Time) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, r.width, r.height))
+	r.RenderOverlayInto(img, data, now)
+	return img
+}
+
+// RenderOverlayInto draws into a caller-owned transparent canvas.
+func (r *Renderer) RenderOverlayInto(img *image.RGBA, data map[string]interface{}, now time.Time) {
+	clear(img.Pix)
 	switch r.theme.Layout {
 	case "trofeo_vertical_v1":
 		r.drawTrofeoVertical(img, data, now)
@@ -159,23 +362,92 @@ func (r *Renderer) RenderOverlay(data map[string]interface{}, now time.Time) *im
 		r.textAt(img, 24, 24, 3, "Unsupported native layout", r.text)
 		r.textAt(img, 24, 58, 2, r.theme.Layout, r.muted)
 	}
-	return img
 }
 
 // RenderLowPower draws a static AMOLED-black, monochrome dashboard. It is
 // intended for idle mode and is regenerated only when sensor data changes.
 func (r *Renderer) RenderLowPower(data map[string]interface{}, now time.Time) *image.RGBA {
-	img := image.NewRGBA(image.Rect(0, 0, r.width, r.height))
-	base := r.RenderOverlay(data, now)
-	draw.Draw(img, img.Bounds(), base, image.Point{}, draw.Over)
-	for offset := 0; offset < len(img.Pix); offset += 4 {
-		luma := uint8((uint16(img.Pix[offset])*54 + uint16(img.Pix[offset+1])*183 + uint16(img.Pix[offset+2])*19) >> 8)
-		img.Pix[offset] = luma
-		img.Pix[offset+1] = luma
-		img.Pix[offset+2] = luma
-		img.Pix[offset+3] = 255
-	}
+	img := image.NewRGBA(image.Rect(0, 0, r.outputWidth, r.outputHeight))
+	r.RenderLowPowerInto(img, data, now)
 	return img
+}
+
+// RenderLowPowerInto renders the layout directly with a monochrome palette,
+// avoiding a color overlay allocation and a second full-screen grayscale pass.
+func (r *Renderer) RenderLowPowerInto(img *image.RGBA, data map[string]interface{}, now time.Time) {
+	if r.wireOutput {
+		if r.logicalScratch == nil {
+			r.logicalScratch = image.NewRGBA(image.Rect(0, 0, r.width, r.height))
+		}
+		r.renderLowPowerLogical(r.logicalScratch, data, now)
+		rotateRGBAInto(img, r.logicalScratch, r.wireAngle)
+		return
+	}
+	r.renderLowPowerLogical(img, data, now)
+}
+
+func (r *Renderer) renderLowPowerLogical(img *image.RGBA, data map[string]interface{}, now time.Time) {
+	draw.Draw(img, img.Bounds(), image.Black, image.Point{}, draw.Src)
+	accent, accent2, accent3, text, muted, panel, panelLine :=
+		r.accent, r.accent2, r.accent3, r.text, r.muted, r.panel, r.panelLine
+	r.accent = color.RGBA{0xd8, 0xd8, 0xd8, 0xff}
+	r.accent2 = color.RGBA{0xb8, 0xb8, 0xb8, 0xff}
+	r.accent3 = color.RGBA{0xc8, 0xc8, 0xc8, 0xff}
+	r.text = color.RGBA{0xf2, 0xf2, 0xf2, 0xff}
+	r.muted = color.RGBA{0x91, 0x91, 0x91, 0xff}
+	r.panel = color.RGBA{0x08, 0x08, 0x08, 0xd8}
+	r.panelLine = color.RGBA{0x58, 0x58, 0x58, 0x88}
+	switch r.theme.Layout {
+	case "trofeo_vertical_v1":
+		r.drawTrofeoVertical(img, data, now)
+	default:
+		r.textAt(img, 24, 24, 3, "Unsupported native layout", r.text)
+	}
+	r.accent, r.accent2, r.accent3, r.text, r.muted, r.panel, r.panelLine =
+		accent, accent2, accent3, text, muted, panel, panelLine
+}
+
+// ViewSignature contains exactly the values rendered by the Trofeo layout,
+// rounded to their displayed precision. It lets idle mode skip unchanged
+// frames even when raw sensor readings jitter.
+func (r *Renderer) ViewSignature(data map[string]interface{}, now time.Time) string {
+	cpu := nested(data, "cpu")
+	board := nested(data, "motherboard")
+	gpu := nested(data, "nvidia_gpu")
+	if len(gpu) == 0 {
+		gpu = nested(data, "amd_gpu")
+	}
+	mem := nested(data, "memory")
+	disk := firstItem(nested(data, "disk"), "disks", "_items")
+	net := firstItem(nested(data, "network"), "interfaces", "_items")
+	cpuFan := valueAny(cpu, "fan_speed", "fan_rpm")
+	if cpuFan == 0 {
+		cpuFan = valueAny(board, "cpu_fan", "system_fan1")
+	}
+	values := []string{
+		now.Format("2006-01-02 15:04"),
+		stringAny(cpu, "name", "model"),
+		stringAny(gpu, "name", "model"),
+		strconv.FormatFloat(valueAny(cpu, "temperature", "temperature_c"), 'f', 0, 64),
+		strconv.FormatFloat(valueAny(cpu, "load", "load_percent"), 'f', 0, 64),
+		formatClock(valueAny(cpu, "frequency", "frequency_mhz")),
+		formatRPM(cpuFan),
+		strconv.FormatFloat(valueAny(gpu, "temperature", "temperature_c"), 'f', 0, 64),
+		strconv.FormatFloat(valueAny(gpu, "load", "load_percent"), 'f', 0, 64),
+		formatGB(valueAny(gpu, "memory_used", "memory_used_mb") * 1024 * 1024),
+		strconv.FormatFloat(valueAny(gpu, "power", "power_watts"), 'f', 0, 64),
+		strconv.FormatFloat(valueAny(mem, "percent"), 'f', 0, 64),
+		strconv.FormatFloat(valueAny(mem, "used", "used_mb")/1024, 'f', 1, 64),
+		strconv.FormatFloat(valueAny(mem, "total", "total_mb")/1024, 'f', 0, 64),
+		stringAny(disk, "mount_point", "mount", "name", "label"),
+		strconv.FormatFloat(valueAny(disk, "percent", "used_percent"), 'f', 0, 64),
+		formatBPS(valueAny(net, "rx_bytes_per_sec", "rx_rate")),
+		formatBPS(valueAny(net, "tx_bytes_per_sec", "tx_rate")),
+	}
+	for _, key := range []string{"dimm1_temp", "dimm2_temp", "dimm3_temp", "dimm4_temp"} {
+		values = append(values, strconv.FormatFloat(valueAny(board, key), 'f', 0, 64))
+	}
+	return strings.Join(values, "\x00")
 }
 
 // PreferredFPS returns the renderer animation cadence.
@@ -197,72 +469,82 @@ func (r *Renderer) drawBackgroundSequence(img *image.RGBA, now time.Time) {
 	}
 	idx := int(math.Floor(float64(now.UnixMilli())/1000*r.backgroundFPS)) % len(r.backgroundPaths)
 	r.requestPrefetch(idx)
-	if len(r.backgroundRGB) > idx && r.backgroundRGB[idx] != nil {
-		r.drawBackgroundRGB(img, r.backgroundRGB[idx])
+	opacity := clamp(r.backgroundOpacity, 0, 1)
+	if r.backgroundDecoder != nil && opacity >= 1 {
+		data, err := r.backgroundData(idx)
+		if err == nil {
+			err = r.backgroundDecoder.DecodeInto(data, img)
+		}
+		if err != nil {
+			draw.Draw(img, img.Bounds(), &image.Uniform{r.bg}, image.Point{}, draw.Src)
+		}
 		return
 	}
 	frame, err := r.backgroundFrame(idx)
 	if err != nil {
 		return
 	}
-	opacity := clamp(r.backgroundOpacity, 0, 1)
 	// The canvas starts black, so opacity is a direct brightness multiplier.
 	// Sensor panels provide their own dark backing; don't apply a second full
 	// screen black veil here or the video becomes invisible behind tinted glass.
-	factor := opacity
-	for y := 0; y < r.height; y++ {
+	if opacity >= 1 {
+		for y := 0; y < r.outputHeight; y++ {
+			src, dst := y*frame.Stride, y*img.Stride
+			copy(img.Pix[dst:dst+r.outputWidth*4], frame.Pix[src:src+r.outputWidth*4])
+		}
+		return
+	}
+	factor := uint16(opacity * 256)
+	for y := 0; y < r.outputHeight; y++ {
 		src, dst := y*frame.Stride, y*img.Stride
-		for x := 0; x < r.width; x++ {
-			img.Pix[dst] = uint8(float64(frame.Pix[src]) * factor)
-			img.Pix[dst+1] = uint8(float64(frame.Pix[src+1]) * factor)
-			img.Pix[dst+2] = uint8(float64(frame.Pix[src+2]) * factor)
+		for x := 0; x < r.outputWidth; x++ {
+			img.Pix[dst] = uint8(uint16(frame.Pix[src]) * factor >> 8)
+			img.Pix[dst+1] = uint8(uint16(frame.Pix[src+1]) * factor >> 8)
+			img.Pix[dst+2] = uint8(uint16(frame.Pix[src+2]) * factor >> 8)
 			img.Pix[dst+3] = 255
 			src, dst = src+4, dst+4
 		}
 	}
 }
 
-func (r *Renderer) drawBackgroundRGB(img *image.RGBA, rgb []byte) {
-	src := 0
-	for y := 0; y < r.height; y++ {
-		dst := y * img.Stride
-		for x := 0; x < r.width; x++ {
-			img.Pix[dst] = rgb[src]
-			img.Pix[dst+1] = rgb[src+1]
-			img.Pix[dst+2] = rgb[src+2]
-			img.Pix[dst+3] = 0xff
-			src += 3
-			dst += 4
-		}
+func (r *Renderer) backgroundData(idx int) ([]byte, error) {
+	if len(r.backgroundJPEG) == len(r.backgroundPaths) {
+		return r.backgroundJPEG[idx], nil
 	}
-}
-
-func rgbaToDimmedRGB(img *image.RGBA, factor float64) []byte {
-	b := img.Bounds()
-	out := make([]byte, b.Dx()*b.Dy()*3)
-	dst := 0
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		src := (y-img.Rect.Min.Y)*img.Stride + (b.Min.X-img.Rect.Min.X)*4
-		for x := b.Min.X; x < b.Max.X; x++ {
-			out[dst] = uint8(float64(img.Pix[src]) * factor)
-			out[dst+1] = uint8(float64(img.Pix[src+1]) * factor)
-			out[dst+2] = uint8(float64(img.Pix[src+2]) * factor)
-			dst += 3
-			src += 4
-		}
-	}
-	return out
+	return os.ReadFile(r.backgroundPaths[idx])
 }
 
 func (r *Renderer) backgroundFrame(idx int) (*image.RGBA, error) {
 	r.backgroundMu.RLock()
-	frame := r.backgroundCache[idx]
+	cached := r.backgroundCache[idx]
 	r.backgroundMu.RUnlock()
-	if frame != nil {
-		return frame, nil
+	if cached != nil {
+		return cached, nil
 	}
-	frame, err := loadRGBA(r.backgroundPaths[idx], r.width, r.height)
+	var frame *image.RGBA
+	r.backgroundMu.Lock()
+	if count := len(r.backgroundFree); count > 0 {
+		frame = r.backgroundFree[count-1]
+		r.backgroundFree = r.backgroundFree[:count-1]
+	}
+	r.backgroundMu.Unlock()
+	if frame == nil {
+		frame = image.NewRGBA(image.Rect(0, 0, r.outputWidth, r.outputHeight))
+	}
+	var err error
+	if r.backgroundDecoder != nil {
+		var data []byte
+		data, err = r.backgroundData(idx)
+		if err == nil {
+			err = r.backgroundDecoder.DecodeInto(data, frame)
+		}
+	} else {
+		frame, err = loadRGBA(r.backgroundPaths[idx], r.outputWidth, r.outputHeight)
+	}
 	if err != nil {
+		r.backgroundMu.Lock()
+		r.backgroundFree = append(r.backgroundFree, frame)
+		r.backgroundMu.Unlock()
 		return nil, err
 	}
 	r.cacheBackgroundFrame(idx, frame)
@@ -289,7 +571,7 @@ func (r *Renderer) prefetchLoop() {
 			if cached {
 				continue
 			}
-			frame, err := loadRGBA(r.backgroundPaths[next], r.width, r.height)
+			frame, err := loadRGBA(r.backgroundPaths[next], r.outputWidth, r.outputHeight)
 			if err == nil {
 				r.cacheBackgroundFrame(next, frame)
 			}
@@ -305,13 +587,17 @@ func (r *Renderer) cacheBackgroundFrame(idx int, frame *image.RGBA) {
 	}
 	r.backgroundCache[idx] = frame
 	r.backgroundOrder = append(r.backgroundOrder, idx)
-	maxFrames := r.backgroundPrefetch + 2
-	if maxFrames < 4 {
-		maxFrames = 4
+	maxFrames := r.backgroundCacheMax
+	if maxFrames <= 0 {
+		maxFrames = r.backgroundPrefetch + 2
+		if maxFrames < 4 {
+			maxFrames = 4
+		}
 	}
 	for len(r.backgroundOrder) > maxFrames {
 		evict := r.backgroundOrder[0]
 		r.backgroundOrder = r.backgroundOrder[1:]
+		r.backgroundFree = append(r.backgroundFree, r.backgroundCache[evict])
 		delete(r.backgroundCache, evict)
 	}
 }
@@ -360,6 +646,41 @@ func scaleCover(dst *image.RGBA, src image.Image) {
 				sx = sb.Max.X - 1
 			}
 			dst.Set(x, y, src.At(sx, sy))
+		}
+	}
+}
+
+func rotateRGBAInto(dst, src *image.RGBA, degrees int) {
+	degrees = ((degrees % 360) + 360) % 360
+	width, height := src.Bounds().Dx(), src.Bounds().Dy()
+	expectedWidth, expectedHeight := width, height
+	if degrees == 90 || degrees == 270 {
+		expectedWidth, expectedHeight = height, width
+	}
+	if dst.Bounds().Dx() != expectedWidth || dst.Bounds().Dy() != expectedHeight {
+		return
+	}
+	if degrees == 0 {
+		for y := 0; y < height; y++ {
+			copy(dst.Pix[y*dst.Stride:y*dst.Stride+width*4], src.Pix[y*src.Stride:y*src.Stride+width*4])
+		}
+		return
+	}
+	for dy := 0; dy < expectedHeight; dy++ {
+		dstOffset := dy * dst.Stride
+		for dx := 0; dx < expectedWidth; dx++ {
+			var sx, sy int
+			switch degrees {
+			case 90:
+				sx, sy = dy, height-1-dx
+			case 180:
+				sx, sy = width-1-dx, height-1-dy
+			case 270:
+				sx, sy = width-1-dy, dx
+			}
+			srcOffset := sy*src.Stride + sx*4
+			copy(dst.Pix[dstOffset:dstOffset+4], src.Pix[srcOffset:srcOffset+4])
+			dstOffset += 4
 		}
 	}
 }
@@ -428,7 +749,7 @@ func (r *Renderer) drawTrofeoVertical(img *image.RGBA, data map[string]interface
 	y += 404
 
 	r.panelBox(img, pad, y, r.width-pad*2, r.height-y-pad)
-	diskName := stringAny(disk, "mount_point", "name", "label")
+	diskName := stringAny(disk, "mount_point", "mount", "name", "label")
 	if diskName == "" {
 		diskName = "DISK"
 	}
@@ -436,7 +757,7 @@ func (r *Renderer) drawTrofeoVertical(img *image.RGBA, data map[string]interface
 	r.textAt(img, pad+24, y+24, 3, "STORAGE / NETWORK", r.accent2)
 	r.textAt(img, pad+24, y+74, 2, short(diskName, 14), r.text)
 	r.textRight(img, r.width-pad-24, y+66, 3, fmt.Sprintf("%.0f%%", diskPercent), r.text)
-	r.bar(img, pad+24, y+122, r.width-pad*2-48, 22, diskPercent, color.RGBA{0x71, 0xff, 0xa8, 0xff})
+	r.bar(img, pad+24, y+122, r.width-pad*2-48, 22, diskPercent, r.accent3)
 	r.textAt(img, pad+24, y+180, 2, "DOWN", r.muted)
 	r.textRight(img, r.width-pad-24, y+174, 3, formatBPS(valueAny(net, "rx_bytes_per_sec", "rx_rate")), r.text)
 	r.textAt(img, pad+24, y+236, 2, "UP", r.muted)

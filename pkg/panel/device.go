@@ -51,6 +51,9 @@ type Device struct {
 	jpegQuality int
 	jpegEncoder string
 	lyWireFrame *image.RGBA
+	lyJPEGCodec jpegcodec.Encoder
+	lyPacket    []byte
+	lyACK       []byte
 
 	// Device info populated on Open()
 	Info *DeviceInfo
@@ -70,9 +73,38 @@ func (d *Device) SetJPEGOptions(quality int, encoder string) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.jpegQuality != quality || d.jpegEncoder != encoder {
+		if d.lyJPEGCodec != nil {
+			_ = d.lyJPEGCodec.Close()
+			d.lyJPEGCodec = nil
+		}
+	}
 	d.jpegQuality = quality
 	d.jpegEncoder = encoder
 	return nil
+}
+
+// PrepareJPEGEncoder initializes the reusable LY encoder and returns the
+// effective backend name. It is safe to call before the first frame.
+func (d *Device) PrepareJPEGEncoder() (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.Profile.ProtocolType() != device.ProtocolLYBulk {
+		return "not-applicable", nil
+	}
+	quality := d.jpegQuality
+	if quality == 0 {
+		quality = 80
+	}
+	backend := d.jpegEncoder
+	if backend == "" {
+		backend = "auto"
+	}
+	codec, err := d.lyEncoderFor(d.Profile.Width(), d.Profile.Height(), quality, backend)
+	if err != nil {
+		return "", err
+	}
+	return codec.Name(), nil
 }
 
 // SetOrientation sets the physical display orientation. For LY bulk displays,
@@ -576,6 +608,13 @@ func (d *Device) Close() error {
 }
 
 func (d *Device) closeInternal() error {
+	if d.lyJPEGCodec != nil {
+		_ = d.lyJPEGCodec.Close()
+		d.lyJPEGCodec = nil
+	}
+	d.lyWireFrame = nil
+	d.lyPacket = nil
+	d.lyACK = nil
 	if d.device == nil {
 		return nil
 	}
@@ -753,6 +792,56 @@ func (d *Device) DisplayImage(img image.Image) error {
 	return d.displayLYImage(img)
 }
 
+// DisplayWireImage sends an image that is already in the LY panel's physical
+// JPEG orientation. Native renderers use this to avoid rotating a full
+// framebuffer for every animation frame.
+func (d *Device) DisplayWireImage(img *image.RGBA) error {
+	_, err := d.DisplayWireImageTimed(img)
+	return err
+}
+
+// DisplayWireImageTimed is DisplayWireImage with per-stage diagnostics.
+func (d *Device) DisplayWireImageTimed(img *image.RGBA) (DisplayMetrics, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var metrics DisplayMetrics
+	if d.device == nil {
+		return metrics, ErrDeviceNotOpen
+	}
+	if d.Profile.ProtocolType() != device.ProtocolLYBulk {
+		return metrics, errors.New("wire-oriented images are supported only by LY bulk displays")
+	}
+	if img == nil {
+		return metrics, errors.New("wire image is nil")
+	}
+	if img.Bounds().Min != (image.Point{}) ||
+		img.Bounds().Dx() != d.Profile.Width() || img.Bounds().Dy() != d.Profile.Height() {
+		return metrics, fmt.Errorf("wire image dimensions = %v, expected (0,0)-(%d,%d)",
+			img.Bounds(), d.Profile.Width(), d.Profile.Height())
+	}
+	quality := d.jpegQuality
+	if quality == 0 {
+		quality = 80
+	}
+	backend := d.jpegEncoder
+	if backend == "" {
+		backend = "auto"
+	}
+	codec, err := d.lyEncoderFor(d.Profile.Width(), d.Profile.Height(), quality, backend)
+	if err != nil {
+		return metrics, err
+	}
+	started := time.Now()
+	payload, err := codec.Encode(img)
+	metrics.Encode = time.Since(started)
+	if err != nil {
+		return metrics, fmt.Errorf("encode LY JPEG frame: %w", err)
+	}
+	transport, err := d.lySendTimed(payload)
+	transport.Encode = metrics.Encode
+	return transport, err
+}
+
 // DisplayRegion sends packed pixel data to a rectangular display region.
 // The buffer must contain exactly w*h pixels in row-major order using the
 // device profile's native color format and byte order.
@@ -856,12 +945,38 @@ func (d *Device) displayLYImage(src image.Image) error {
 	if encoder == "" {
 		encoder = "auto"
 	}
-	payload, wire, err := encodeRGBAJPEG(rgba, d.Profile.Width(), d.Profile.Height(), d.Orientation, quality, encoder, d.lyWireFrame)
+	wireAngle := normalizeWireAngle(180 - d.Orientation)
+	wire := rotateRGBAInto(rgba, wireAngle, d.lyWireFrame)
+	if gotW, gotH := wire.Bounds().Dx(), wire.Bounds().Dy(); gotW != d.Profile.Width() || gotH != d.Profile.Height() {
+		return fmt.Errorf("LY JPEG frame dimensions after rotation = %dx%d, expected %dx%d", gotW, gotH, d.Profile.Width(), d.Profile.Height())
+	}
+	codec, err := d.lyEncoderFor(wire.Bounds().Dx(), wire.Bounds().Dy(), quality, encoder)
 	if err != nil {
 		return err
 	}
 	d.lyWireFrame = wire
+	payload, err := codec.Encode(wire)
+	if err != nil {
+		return fmt.Errorf("encode LY JPEG frame: %w", err)
+	}
 	return d.lySend(payload)
+}
+
+func (d *Device) lyEncoderFor(width, height, quality int, backend string) (jpegcodec.Encoder, error) {
+	if d.lyJPEGCodec != nil {
+		return d.lyJPEGCodec, nil
+	}
+	codec, err := jpegcodec.NewEncoder(jpegcodec.Config{
+		Width:   width,
+		Height:  height,
+		Quality: quality,
+		Backend: backend,
+	})
+	if err != nil {
+		return nil, err
+	}
+	d.lyJPEGCodec = codec
+	return codec, nil
 }
 
 func encodeRGB888JPEG(buffer []byte, logicalWidth, logicalHeight, physicalWidth, physicalHeight, orientation, quality int, encoder string) ([]byte, error) {

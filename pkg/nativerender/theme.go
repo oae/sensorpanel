@@ -20,6 +20,7 @@ type Theme struct {
 	BackgroundSequence *BackgroundSequence `json:"background_sequence,omitempty"`
 	Accent             string              `json:"accent,omitempty"`
 	Accent2            string              `json:"accent2,omitempty"`
+	Accent3            string              `json:"accent3,omitempty"`
 	Text               string              `json:"text,omitempty"`
 	Muted              string              `json:"muted,omitempty"`
 	Panel              string              `json:"panel,omitempty"`
@@ -72,6 +73,9 @@ func Load(path string) (*Theme, error) {
 	}
 	if t.Accent2 == "" {
 		t.Accent2 = "#ff4df3"
+	}
+	if t.Accent3 == "" {
+		t.Accent3 = "#71ffa8"
 	}
 	if t.Text == "" {
 		t.Text = "#f8fbff"

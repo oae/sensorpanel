@@ -4,6 +4,7 @@ package sensors
 import (
 	"reflect"
 	"sync"
+	"time"
 )
 
 // FieldType represents the type of a sensor field for TypeScript generation.
@@ -235,6 +236,18 @@ type Collector struct {
 	registry *Registry
 	state    *CollectorState
 	config   *Config
+
+	mu                sync.Mutex
+	available         []availableProvider
+	lastDiscovery     time.Time
+	lastCollected     map[string]time.Time
+	snapshot          map[string]interface{}
+	discoveryInterval time.Duration
+}
+
+type availableProvider struct {
+	provider Provider
+	id       string
 }
 
 // NewCollector creates a new modular collector.
@@ -244,9 +257,12 @@ func NewCollector(config *Config) *Collector {
 	}
 
 	c := &Collector{
-		registry: GlobalRegistry(),
-		state:    NewCollectorState(),
-		config:   config,
+		registry:          GlobalRegistry(),
+		state:             NewCollectorState(),
+		config:            config,
+		lastCollected:     make(map[string]time.Time),
+		snapshot:          make(map[string]interface{}),
+		discoveryInterval: time.Minute,
 	}
 
 	// Configure providers that implement Configurable
@@ -261,23 +277,77 @@ func NewCollector(config *Config) *Collector {
 
 // CollectAll gathers data from all available sensors.
 func (c *Collector) CollectAll() map[string]interface{} {
-	result := make(map[string]interface{})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result, _ := c.collectLocked(time.Now(), false, true)
+	return result
+}
 
-	for _, p := range c.registry.Available() {
-		meta := p.Meta()
+// CollectScheduled updates only providers whose active/idle cadence is due and
+// returns a complete snapshot containing the most recent value of every
+// provider. The boolean reports whether any provider was collected.
+func (c *Collector) CollectScheduled(now time.Time, idle bool) (map[string]interface{}, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.collectLocked(now, idle, false)
+}
 
-		// Check if sensor is enabled in config
-		if !c.isSensorEnabled(meta.ID) {
+func (c *Collector) collectLocked(now time.Time, idle, force bool) (map[string]interface{}, bool) {
+	if c.lastCollected == nil {
+		c.lastCollected = make(map[string]time.Time)
+	}
+	if c.snapshot == nil {
+		c.snapshot = make(map[string]interface{})
+	}
+	c.refreshProvidersLocked(now)
+	collected := false
+	for _, available := range c.available {
+		if !force && now.Sub(c.lastCollected[available.id]) < providerInterval(available.id, idle) {
 			continue
 		}
-
-		data := p.Collect(c.state)
+		data := available.provider.Collect(c.state)
+		c.lastCollected[available.id] = now
+		collected = true
 		if data != nil {
-			result[meta.ID] = data
+			c.snapshot[available.id] = data
 		}
 	}
+	return c.snapshot, collected
+}
 
-	return result
+func (c *Collector) refreshProvidersLocked(now time.Time) {
+	interval := c.discoveryInterval
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	if c.available != nil && now.Sub(c.lastDiscovery) < interval {
+		return
+	}
+	c.available = c.available[:0]
+	for _, p := range c.registry.All() {
+		id := p.Meta().ID
+		if c.isSensorEnabled(id) && p.Available() {
+			c.available = append(c.available, availableProvider{provider: p, id: id})
+		}
+	}
+	c.lastDiscovery = now
+}
+
+func providerInterval(id string, idle bool) time.Duration {
+	if idle {
+		switch id {
+		case "disk", "motherboard":
+			return 30 * time.Second
+		default:
+			return 5 * time.Second
+		}
+	}
+	switch id {
+	case "disk", "motherboard":
+		return 5 * time.Second
+	default:
+		return time.Second
+	}
 }
 
 // CollectByID gathers data from a specific sensor.

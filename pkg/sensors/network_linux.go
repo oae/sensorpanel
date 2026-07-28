@@ -123,7 +123,7 @@ func (p *NetworkProvider) Collect(state *CollectorState) map[string]interface{} 
 		var rxRate, txRate float64
 		if prev, ok := GetTyped[netSample](state, stateKey); ok {
 			elapsed := now.Sub(prev.time).Seconds()
-			if elapsed > 0 && elapsed < 5 {
+			if elapsed > 0 && elapsed < 2*60 {
 				rxRate = float64(rxBytes-prev.rxBytes) / elapsed
 				txRate = float64(txBytes-prev.txBytes) / elapsed
 			}

@@ -28,6 +28,8 @@
             # Runtime dependencies
             buildInputs = with pkgs; [
               libusb1
+            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.libjpeg_turbo
             ];
             
             nativeBuildInputs = with pkgs; [
@@ -36,6 +38,7 @@
             
             # CGO is needed for gousb
             CGO_ENABLED = "1";
+            tags = pkgs.lib.optionals pkgs.stdenv.isLinux [ "turbojpeg" ];
             
             ldflags = [ "-s" "-w" ];
             
@@ -61,6 +64,7 @@
             
             # USB
             libusb1
+            libjpeg_turbo
             pkg-config
             usbutils
             
@@ -145,7 +149,7 @@
             users.users.${cfg.user} = {
               isSystemUser = true;
               group = cfg.group;
-              extraGroups = [ "video" ];
+              extraGroups = [ "video" "input" ];
               description = "SensorPanel service user";
               home = "/var/lib/sensorpanel";
               createHome = true;
@@ -155,6 +159,9 @@
             services.udev.extraRules = ''
               # AX206 USB Display
               SUBSYSTEM=="usb", ATTR{idVendor}=="1908", ATTR{idProduct}=="0102", MODE="0660", GROUP="${cfg.group}", TAG+="uaccess"
+              # Thermalright Trofeo Vision LY displays
+              SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="5408", MODE="0660", GROUP="${cfg.group}", TAG+="uaccess"
+              SUBSYSTEM=="usb", ATTR{idVendor}=="0416", ATTR{idProduct}=="5409", MODE="0660", GROUP="${cfg.group}", TAG+="uaccess"
             '';
             
             # Systemd service
@@ -179,7 +186,7 @@
                 
                 # Allow USB access
                 DeviceAllow = [ "char-usb_device rwm" ];
-                SupplementaryGroups = [ cfg.group "video" ];
+                SupplementaryGroups = [ cfg.group "video" "input" ];
               };
             };
           };
